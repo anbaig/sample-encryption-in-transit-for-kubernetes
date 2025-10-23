@@ -43,9 +43,9 @@ metadata:
   namespace: demo-app
   annotations:
     kubernetes.io/ingress.class: nginx
-    ${CERT_TYPE_CONFIG:+cert-manager.io/issuer: "aws-pca-cluster-issuer"}
-    ${CERT_TYPE_CONFIG:+cert-manager.io/issuer-kind: AWSPCAClusterIssuer}
-    ${CERT_TYPE_CONFIG:+cert-manager.io/issuer-group: awspca.cert-manager.io}
+    cert-manager.io/issuer: "aws-pca-cluster-issuer"
+    cert-manager.io/issuer-kind: AWSPCAClusterIssuer
+    cert-manager.io/issuer-group: awspca.cert-manager.io
 spec:
   tls:
   - hosts:
