@@ -22,30 +22,18 @@ This setup:
 - `--cluster-name`: Name of the EKS cluster (default: aws-pca-k8s-demo)
 - `--region`: AWS region (default: us-east-1)
 - `--public-cert-arn`: ARN of existing public certificate (if provided, uses public certificate)
-- `--private-ca-arn`: ARN of AWS Private CA (required for private certificates)
-- `--domain-name`: Domain name for private certificate (default: *.elb.&lt;region&gt;.amazonaws.com)
-- `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation
 
 ### Examples
 
-Deploy with private certificate:
+Deploy with private certificate (default):
 ```bash
-./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012
+./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1
 ```
 
 Deploy with existing public certificate:
 ```bash
 ./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1 \
   --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
-```
-
-### Getting Private CA ARN
-
-If you have already deployed the core PKI using `deploy-core-pki/`, you can get the Private CA ARN with:
-
-```bash
-kubectl get awspcaclusterissuer aws-pca-cluster-issuer -o jsonpath='{.spec.arn}'
 ```
 
 ## Testing the Ingress

@@ -5,9 +5,6 @@ set -euo pipefail
 REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
 PUBLIC_CERT_ARN=""
-HOSTED_ZONE_ID=""
-PRIVATE_CA_ARN=""
-DOMAIN_NAME=""
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -22,18 +19,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --public-cert-arn)
       PUBLIC_CERT_ARN="$2"
-      shift 2
-      ;;
-    --hosted-zone-id)
-      HOSTED_ZONE_ID="$2"
-      shift 2
-      ;;
-    --private-ca-arn)
-      PRIVATE_CA_ARN="$2"
-      shift 2
-      ;;
-    --domain-name)
-      DOMAIN_NAME="$2"
       shift 2
       ;;
     *)
@@ -124,14 +109,7 @@ if [[ -n "$PUBLIC_CERT_ARN" ]]; then
   rm -f /tmp/cert.pem /tmp/key.pem
   
 else
-  echo "Using private certificate from AWS Private CA..."
-  
-  if [[ -z "$PRIVATE_CA_ARN" ]]; then
-    echo "Error: --private-ca-arn is required for private certificates"
-    exit 1
-  fi
-  
-  echo "Using Private CA: $PRIVATE_CA_ARN"
+  echo "Using private certificate from AWS Private CA via cert-manager..."
 fi
 
 echo "Deploying a demo application..."
