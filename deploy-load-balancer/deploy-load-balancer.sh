@@ -6,6 +6,7 @@ REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
 PUBLIC_CERT_ARN=""
 HOSTED_ZONE_ID=""
+PRIVATE_CA_ARN=""
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -24,6 +25,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --hosted-zone-id)
       HOSTED_ZONE_ID="$2"
+      shift 2
+      ;;
+    --private-ca-arn)
+      PRIVATE_CA_ARN="$2"
       shift 2
       ;;
     *)
@@ -95,11 +100,9 @@ if [[ "$CERT_TYPE" == "public" ]]; then
   
 else
   echo "Using private certificate from AWS Private CA..."
-  # Get the Private CA ARN from the cluster issuer
-  PRIVATE_CA_ARN=$(kubectl get awspcaclusterissuer aws-pca-cluster-issuer -o jsonpath='{.spec.arn}' 2>/dev/null || echo "")
   
   if [[ -z "$PRIVATE_CA_ARN" ]]; then
-    echo "Error: No AWS Private CA found. Please deploy core PKI first using deploy-core-pki/"
+    echo "Error: --private-ca-arn is required for private certificates"
     exit 1
   fi
   
