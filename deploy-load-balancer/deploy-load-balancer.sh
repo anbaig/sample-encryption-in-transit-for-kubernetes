@@ -43,17 +43,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Determine certificate type based on parameters
-if [[ -n "$PUBLIC_CERT_ARN" ]]; then
-  CERT_TYPE="public"
-else
-  CERT_TYPE="private"
-fi
-
 echo "=== Deploying Load Balancer with TLS ==="
 echo "Cluster: $CLUSTER_NAME"
 echo "Region: $REGION"
-echo "Certificate Type: $CERT_TYPE"
+if [[ -n "$PUBLIC_CERT_ARN" ]]; then
+  echo "Certificate Type: public"
+else
+  echo "Certificate Type: private"
+fi
 
 export AWS_REGION=$REGION
 
@@ -86,7 +83,7 @@ echo "Deploying non-TLS ingress for demo app..."
 envsubst < "$(dirname "$0")/manifests/non-tls-ingress.yaml" | kubectl apply -f -
 
 # Create certificate based on type
-if [[ "$CERT_TYPE" == "public" ]]; then
+if [[ "$USE_PUBLIC_CERT" == "true" ]]; then
   echo "Using existing public certificate: $PUBLIC_CERT_ARN"
   
   # Verify certificate exists and is issued
@@ -157,7 +154,7 @@ else
   
   # DNS setup for certificates
   CERT_DOMAIN=""
-  if [[ "$CERT_TYPE" == "public" ]]; then
+  if [[ -n "$PUBLIC_CERT_ARN" ]]; then
     # For public certificates, always use the domain from the certificate
     CERT_DOMAIN=$(aws acm describe-certificate \
       --certificate-arn $PUBLIC_CERT_ARN \
@@ -185,7 +182,7 @@ else
         }]
       }"
     echo "DNS record created: $CERT_DOMAIN -> $NLB_HOSTNAME"
-  elif [[ "$CERT_TYPE" == "public" ]]; then
+  elif [[ -n "$PUBLIC_CERT_ARN" ]]; then
     CERT_DOMAIN=$(aws acm describe-certificate \
       --certificate-arn $PUBLIC_CERT_ARN \
       --region $REGION \
@@ -216,7 +213,7 @@ else
   echo "Your load balancer is now available at:"
   echo "https://${NLB_HOSTNAME}"
   echo ""
-  if [[ "$CERT_TYPE" == "private" ]]; then
+  if [[ -z "$PUBLIC_CERT_ARN" ]]; then
     echo "Note: Since the certificate is issued by a private CA, your browser will show a warning."
     echo "To trust the certificate, you need to import the CA certificate into your trust store."
   fi
