@@ -83,7 +83,7 @@ echo "Deploying non-TLS ingress for demo app..."
 envsubst < "$(dirname "$0")/manifests/non-tls-ingress.yaml" | kubectl apply -f -
 
 # Create certificate based on type
-if [[ "$USE_PUBLIC_CERT" == "true" ]]; then
+if [[ -n "$PUBLIC_CERT_ARN" ]]; then
   echo "Using existing public certificate: $PUBLIC_CERT_ARN"
   
   # Verify certificate exists and is issued
