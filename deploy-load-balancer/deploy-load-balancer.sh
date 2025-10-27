@@ -7,6 +7,7 @@ CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
 PUBLIC_CERT_ARN=""
 HOSTED_ZONE_ID=""
 PRIVATE_CA_ARN=""
+DOMAIN_NAME=""
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -29,6 +30,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --private-ca-arn)
       PRIVATE_CA_ARN="$2"
+      shift 2
+      ;;
+    --domain-name)
+      DOMAIN_NAME="$2"
       shift 2
       ;;
     *)
@@ -108,9 +113,16 @@ else
   
   echo "Using Private CA: $PRIVATE_CA_ARN"
   
+  # Determine domain name for private certificate
+  if [[ -n "$DOMAIN_NAME" ]]; then
+    CERT_DOMAIN_NAME="$DOMAIN_NAME"
+  else
+    CERT_DOMAIN_NAME="*.elb.${REGION}.amazonaws.com"
+  fi
+  
   # Request certificate from Private CA
   CERT_ARN=$(aws acm request-certificate \
-    --domain-name "*.elb.${REGION}.amazonaws.com" \
+    --domain-name "$CERT_DOMAIN_NAME" \
     --certificate-authority-arn $PRIVATE_CA_ARN \
     --region $REGION \
     --query 'CertificateArn' \
@@ -146,14 +158,15 @@ else
   # DNS setup for certificates
   CERT_DOMAIN=""
   if [[ "$CERT_TYPE" == "public" ]]; then
+    # For public certificates, always use the domain from the certificate
     CERT_DOMAIN=$(aws acm describe-certificate \
       --certificate-arn $PUBLIC_CERT_ARN \
       --region $REGION \
       --query 'Certificate.DomainName' \
       --output text)
-  elif [[ -n "$HOSTED_ZONE_ID" ]]; then
-    # For private certificates, use NLB hostname as the domain
-    CERT_DOMAIN=$NLB_HOSTNAME
+  elif [[ -n "$DOMAIN_NAME" ]]; then
+    # For private certificates, use the provided domain name
+    CERT_DOMAIN="$DOMAIN_NAME"
   fi
   
   if [[ -n "$CERT_DOMAIN" && -n "$HOSTED_ZONE_ID" ]]; then

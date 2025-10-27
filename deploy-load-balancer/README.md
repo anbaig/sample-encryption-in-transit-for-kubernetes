@@ -29,7 +29,8 @@ This setup:
 - `--region`: AWS region (default: us-east-1)
 - `--public-cert-arn`: ARN of existing public certificate (if provided, uses public certificate)
 - `--private-ca-arn`: ARN of AWS Private CA (required for private certificates)
-- `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation (works with both certificate types)
+- `--domain-name`: Domain name for private certificate (default: *.elb.<region>.amazonaws.com)
+- `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation
 
 ### Examples
 
@@ -39,10 +40,18 @@ Deploy with private certificate:
   --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012
 ```
 
-Deploy with private certificate and DNS record creation:
+Deploy with private certificate and custom domain:
 ```bash
 ./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
   --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012 \
+  --domain-name "api.example.com"
+```
+
+Deploy with private certificate, custom domain, and DNS record creation:
+```bash
+./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
+  --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012 \
+  --domain-name "api.example.com" \
   --hosted-zone-id Z1234567890ABC
 ```
 
@@ -76,8 +85,8 @@ https://<nlb-hostname>
 ```
 
 If a hosted zone ID was provided, a DNS CNAME record will be created automatically:
-- For public certificates: Points the certificate domain to the NLB
-- For private certificates: Creates a CNAME record using the NLB hostname as the domain name
+- For **private certificates**: Uses the domain name specified in `--domain-name` (or defaults to NLB hostname pattern)
+- For **public certificates**: Uses the domain name from the existing certificate
 
 ## Architecture
 
