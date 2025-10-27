@@ -50,19 +50,8 @@ echo "Certificate Type: $CERT_TYPE"
 
 export AWS_REGION=$REGION
 
-# Get ingress service hostname
-INGRESS_HOSTNAME=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
-
-if [[ -z "$INGRESS_HOSTNAME" ]]; then
-  echo "Error: No ingress controller found. Please deploy ingress first using deploy-ingress/"
-  exit 1
-fi
-
-echo "Found ingress hostname: $INGRESS_HOSTNAME"
-
 # Deploy non-TLS ingress for the demo app (TLS will terminate at ALB)
 echo "Deploying non-TLS ingress for demo app..."
-export LOAD_BALANCER_HOSTNAME=$INGRESS_HOSTNAME
 envsubst < "$(dirname "$0")/manifests/non-tls-ingress.yaml" | kubectl apply -f -
 
 # Create certificate based on type
