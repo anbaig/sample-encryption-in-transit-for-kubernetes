@@ -5,6 +5,7 @@ set -euo pipefail
 REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
 PUBLIC_CERT_ARN=""
+HOSTED_ZONE_ID=""
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -19,6 +20,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --public-cert-arn)
       PUBLIC_CERT_ARN="$2"
+      shift 2
+      ;;
+    --hosted-zone-id)
+      HOSTED_ZONE_ID="$2"
       shift 2
       ;;
     *)
@@ -67,6 +72,32 @@ kubectl wait --namespace ingress-nginx \
 
 LOAD_BALANCER_HOSTNAME=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "Load balancer hostname: $LOAD_BALANCER_HOSTNAME"
+
+# Create DNS record if hosted zone ID is provided
+if [[ -n "$PUBLIC_CERT_ARN" && -n "$HOSTED_ZONE_ID" ]]; then
+  # Extract domain from certificate
+  CERT_DOMAIN=$(aws acm describe-certificate \
+    --certificate-arn $PUBLIC_CERT_ARN \
+    --region $REGION \
+    --query 'Certificate.DomainName' \
+    --output text)
+  
+  echo "Creating DNS record..."
+  aws route53 change-resource-record-sets \
+    --hosted-zone-id $HOSTED_ZONE_ID \
+    --change-batch "{
+      \"Changes\": [{
+        \"Action\": \"UPSERT\",
+        \"ResourceRecordSet\": {
+          \"Name\": \"$CERT_DOMAIN\",
+          \"Type\": \"CNAME\",
+          \"TTL\": 300,
+          \"ResourceRecords\": [{\"Value\": \"$LOAD_BALANCER_HOSTNAME\"}]
+        }
+      }]
+    }"
+  echo "DNS record created: $CERT_DOMAIN -> $LOAD_BALANCER_HOSTNAME"
+fi
 
 # Handle certificate provisioning based on type
 if [[ -n "$PUBLIC_CERT_ARN" ]]; then
@@ -123,7 +154,12 @@ fi
 
 echo "=== Deployment Complete ==="
 echo "Your TLS-enabled ingress is now available at:"
-echo "https://${LOAD_BALANCER_HOSTNAME}"
+if [[ -n "$PUBLIC_CERT_ARN" && -n "$HOSTED_ZONE_ID" ]]; then
+  echo "https://${CERT_DOMAIN}"
+  echo "(DNS: $CERT_DOMAIN -> $LOAD_BALANCER_HOSTNAME)"
+else
+  echo "https://${LOAD_BALANCER_HOSTNAME}"
+fi
 echo ""
 if [[ -z "$PUBLIC_CERT_ARN" ]]; then
   echo "Note: Since the certificate is issued by a private CA, your browser will show a warning."
