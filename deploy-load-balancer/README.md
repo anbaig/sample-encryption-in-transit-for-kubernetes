@@ -60,21 +60,6 @@ If you have already deployed the core PKI using `deploy-core-pki/`, you can get 
 kubectl get awspcaclusterissuer aws-pca-cluster-issuer -o jsonpath='{.spec.arn}'
 ```
 
-## Certificate Types
-
-### Private Certificate
-- Uses AWS Private CA via AWS Certificate Manager
-- Requires importing the CA certificate into client trust stores
-- Suitable for internal/development workloads
-- More cost-effective for internal use
-
-### Public Certificate
-- Uses an existing public certificate from AWS Certificate Manager
-- Certificate must be in ISSUED status before deployment
-- Trusted by all browsers and clients
-- Suitable for production workloads
-- Optionally creates DNS CNAME record if hosted zone ID provided
-
 ## Testing the Load Balancer
 
 After deployment, the script will output the hostname of the Network Load Balancer. You can access the demo application using:
