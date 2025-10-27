@@ -1,21 +1,21 @@
 # Deploy Load Balancer with TLS
 
-This module demonstrates how to deploy an Application Load Balancer (ALB) that points to your EKS cluster's ingress controller with TLS termination.
+This module demonstrates how to deploy a Network Load Balancer (NLB) that points to your EKS cluster's ingress controller with TLS termination.
 
 ## Overview
 
 This setup:
-1. Creates an Application Load Balancer with TLS listener
+1. Creates a Network Load Balancer with TLS listener
 2. Provisions either a public or private certificate via AWS Certificate Manager
-3. Configures the ALB to forward traffic to the existing ingress controller
-4. Supports both public certificates (ACM) and private certificates (AWS Private CA)
+3. Configures the NLB to forward traffic to the NGINX ingress controller
+4. Supports both public certificates (existing ACM) and private certificates (AWS Private CA)
+5. Optionally creates DNS records for public certificates
 
 ## Prerequisites
 
 - EKS cluster created using `create-cluster/`
-- Ingress controller deployed using `deploy-ingress/`
 - For private certificates: AWS Private CA deployed using `deploy-core-pki/`
-- AWS Load Balancer Controller installed on the cluster
+- For public certificates: Existing certificate in ACM in ISSUED status
 
 ## Usage
 
@@ -27,8 +27,8 @@ This setup:
 
 - `--cluster-name`: Name of the EKS cluster (default: aws-pca-k8s-demo)
 - `--region`: AWS region (default: us-east-1)
-- `--cert-type`: Certificate type - 'public' or 'private' (default: private)
-- `--public-cert-arn`: ARN of existing public certificate (required when cert-type is 'public')
+- `--public-cert-arn`: ARN of existing public certificate (if provided, uses public certificate)
+- `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation (requires public-cert-arn)
 
 ### Examples
 
@@ -40,17 +40,17 @@ Deploy with private certificate (default):
 Deploy with existing public certificate:
 ```bash
 ./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --cert-type public --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
+  --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
+```
+
+Deploy with public certificate and automatic DNS record creation:
+```bash
+./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
+  --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012 \
+  --hosted-zone-id Z1234567890ABC
 ```
 
 ## Certificate Types
-
-### Public Certificate
-- Uses an existing public certificate from AWS Certificate Manager
-- Certificate must be in ISSUED status before deployment
-- Automatically validated via DNS
-- Trusted by all browsers and clients
-- Suitable for production workloads
 
 ### Private Certificate
 - Uses AWS Private CA via AWS Certificate Manager
@@ -58,20 +58,29 @@ Deploy with existing public certificate:
 - Suitable for internal/development workloads
 - More cost-effective for internal use
 
+### Public Certificate
+- Uses an existing public certificate from AWS Certificate Manager
+- Certificate must be in ISSUED status before deployment
+- Trusted by all browsers and clients
+- Suitable for production workloads
+- Optionally creates DNS CNAME record if hosted zone ID provided
+
 ## Testing the Load Balancer
 
-After deployment, the script will output the hostname of the Application Load Balancer. You can access the demo application using:
+After deployment, the script will output the hostname of the Network Load Balancer. You can access the demo application using:
 
 ```
-https://<alb-hostname>
+https://<nlb-hostname>
 ```
+
+For public certificates with DNS records created, you can also access via the certificate domain name.
 
 ## Architecture
 
 The load balancer sits in front of your ingress controller:
 
 ```
-Internet → ALB (TLS termination) → Ingress Controller → Application Pods
+Internet → NLB (TLS termination) → NGINX Ingress Controller (HTTP) → Application Pods
 ```
 
-This provides an additional layer of load balancing and TLS termination at the AWS infrastructure level.
+This provides TLS termination at the AWS infrastructure level while allowing the ingress controller to handle HTTP routing.
