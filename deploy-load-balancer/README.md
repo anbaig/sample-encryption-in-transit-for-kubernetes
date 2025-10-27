@@ -29,7 +29,7 @@ This setup:
 - `--region`: AWS region (default: us-east-1)
 - `--public-cert-arn`: ARN of existing public certificate (if provided, uses public certificate)
 - `--private-ca-arn`: ARN of AWS Private CA (required for private certificates)
-- `--domain-name`: Domain name for private certificate (default: *.elb.<region>.amazonaws.com)
+- `--domain-name`: Domain name for private certificate (default: *.elb.&lt;region&gt;.amazonaws.com)
 - `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation
 
 ### Examples
@@ -85,7 +85,7 @@ https://<nlb-hostname>
 ```
 
 If a hosted zone ID was provided, a DNS CNAME record will be created automatically:
-- For **private certificates**: Uses the domain name specified in `--domain-name` (or defaults to NLB hostname pattern)
+- For **private certificates**: Uses the domain name specified in `--domain-name` (or defaults to *.elb.&lt;region&gt;.amazonaws.com pattern)
 - For **public certificates**: Uses the domain name from the existing certificate
 
 ## Architecture
