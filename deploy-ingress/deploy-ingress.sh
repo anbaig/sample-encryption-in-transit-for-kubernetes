@@ -4,8 +4,10 @@ set -euo pipefail
 # Default values
 REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
-CERT_TYPE=${CERT_TYPE:-private}
 PUBLIC_CERT_ARN=""
+HOSTED_ZONE_ID=""
+PRIVATE_CA_ARN=""
+DOMAIN_NAME=""
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -18,12 +20,20 @@ while [[ $# -gt 0 ]]; do
       REGION="$2"
       shift 2
       ;;
-    --cert-type)
-      CERT_TYPE="$2"
-      shift 2
-      ;;
     --public-cert-arn)
       PUBLIC_CERT_ARN="$2"
+      shift 2
+      ;;
+    --hosted-zone-id)
+      HOSTED_ZONE_ID="$2"
+      shift 2
+      ;;
+    --private-ca-arn)
+      PRIVATE_CA_ARN="$2"
+      shift 2
+      ;;
+    --domain-name)
+      DOMAIN_NAME="$2"
       shift 2
       ;;
     *)
@@ -33,20 +43,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ "$CERT_TYPE" != "public" && "$CERT_TYPE" != "private" ]]; then
-  echo "Error: --cert-type must be either 'public' or 'private'"
-  exit 1
-fi
-
-if [[ "$CERT_TYPE" == "public" && -z "$PUBLIC_CERT_ARN" ]]; then
-  echo "Error: --public-cert-arn is required when --cert-type is 'public'"
-  exit 1
-fi
-
 echo "=== Deploying TLS-enabled Ingress ==="
 echo "Cluster: $CLUSTER_NAME"
 echo "Region: $REGION"
-echo "Certificate Type: $CERT_TYPE"
+if [[ -n "$PUBLIC_CERT_ARN" ]]; then
+  echo "Certificate Type: public"
+else
+  echo "Certificate Type: private"
+fi
 
 export AWS_REGION=$REGION
 
@@ -80,7 +84,7 @@ LOAD_BALANCER_HOSTNAME=$(kubectl get service -n ingress-nginx ingress-nginx-cont
 echo "Load balancer hostname: $LOAD_BALANCER_HOSTNAME"
 
 # Handle certificate provisioning based on type
-if [[ "$CERT_TYPE" == "public" ]]; then
+if [[ -n "$PUBLIC_CERT_ARN" ]]; then
   echo "Using existing public certificate: $PUBLIC_CERT_ARN"
   
   # Verify certificate exists and is issued
@@ -121,12 +125,19 @@ if [[ "$CERT_TYPE" == "public" ]]; then
   
 else
   echo "Using private certificate from AWS Private CA..."
+  
+  if [[ -z "$PRIVATE_CA_ARN" ]]; then
+    echo "Error: --private-ca-arn is required for private certificates"
+    exit 1
+  fi
+  
+  echo "Using Private CA: $PRIVATE_CA_ARN"
 fi
 
 echo "Deploying a demo application..."
 export LOAD_BALANCER_HOSTNAME=$LOAD_BALANCER_HOSTNAME
 
-if [[ "$CERT_TYPE" == "public" ]]; then
+if [[ -n "$PUBLIC_CERT_ARN" ]]; then
   envsubst < "$(dirname "$0")/manifests/demo-app-public.yaml" | kubectl apply -f -
 else
   envsubst < "$(dirname "$0")/manifests/demo-app-private.yaml" | kubectl apply -f -
@@ -136,7 +147,7 @@ echo "=== Deployment Complete ==="
 echo "Your TLS-enabled ingress is now available at:"
 echo "https://${LOAD_BALANCER_HOSTNAME}"
 echo ""
-if [[ "$CERT_TYPE" == "private" ]]; then
+if [[ -z "$PUBLIC_CERT_ARN" ]]; then
   echo "Note: Since the certificate is issued by a private CA, your browser will show a warning."
   echo "To trust the certificate, you need to import the CA certificate into your trust store."
 else

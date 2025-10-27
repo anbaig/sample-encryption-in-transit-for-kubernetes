@@ -21,36 +21,32 @@ This setup:
 
 - `--cluster-name`: Name of the EKS cluster (default: aws-pca-k8s-demo)
 - `--region`: AWS region (default: us-east-1)
-- `--cert-type`: Certificate type - 'public' or 'private' (default: private)
-- `--public-cert-arn`: ARN of existing public certificate (required when cert-type is 'public')
+- `--public-cert-arn`: ARN of existing public certificate (if provided, uses public certificate)
+- `--private-ca-arn`: ARN of AWS Private CA (required for private certificates)
+- `--domain-name`: Domain name for private certificate (default: *.elb.&lt;region&gt;.amazonaws.com)
+- `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation
 
 ### Examples
 
-Deploy with private certificate (default):
+Deploy with private certificate:
 ```bash
-./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1
+./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1 \
+  --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012
 ```
 
 Deploy with existing public certificate:
 ```bash
 ./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --cert-type public --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
+  --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
 ```
 
-## Certificate Types
+### Getting Private CA ARN
 
-### Private Certificate
-- Uses AWS Private CA via cert-manager
-- Requires importing the CA certificate into client trust stores
-- Suitable for internal/development workloads
-- Requires `deploy-core-pki/` to be deployed first
+If you have already deployed the core PKI using `deploy-core-pki/`, you can get the Private CA ARN with:
 
-### Public Certificate
-- Uses an existing public certificate from AWS Certificate Manager
-- Certificate must be in ISSUED status before deployment
-- Exports the certificate and creates a Kubernetes secret
-- Trusted by all browsers and clients
-- Suitable for production workloads with public domains
+```bash
+kubectl get awspcaclusterissuer aws-pca-cluster-issuer -o jsonpath='{.spec.arn}'
+```
 
 ## Testing the Ingress
 
@@ -62,7 +58,7 @@ https://<load-balancer-hostname>
 
 **Note for private certificates**: Since the certificate is issued by a private CA, your browser will show a warning. To trust the certificate, you need to import the CA certificate into your trust store.
 
-**Note for public certificates**: The certificate should be trusted by browsers, but DNS validation may be required during certificate issuance.
+**Note for public certificates**: The certificate should be trusted by browsers.
 
 ## Customization
 
