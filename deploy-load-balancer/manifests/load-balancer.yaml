@@ -10,6 +10,7 @@ metadata:
     alb.ingress.kubernetes.io/certificate-arn: ${CERT_ARN}
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
 spec:
   rules:
   - http:
@@ -18,20 +19,18 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: nginx-ingress-controller
+            name: ingress-nginx-controller
             port:
               number: 80
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: nginx-ingress-controller
+  name: ingress-nginx-controller
   namespace: demo-app
 spec:
   type: ExternalName
-  externalName: ${INGRESS_HOSTNAME}
+  externalName: ingress-nginx-controller.ingress-nginx.svc.cluster.local
   ports:
   - port: 80
     targetPort: 80
-  - port: 443
-    targetPort: 443

@@ -60,6 +60,11 @@ fi
 
 echo "Found ingress hostname: $INGRESS_HOSTNAME"
 
+# Deploy non-TLS ingress for the demo app (TLS will terminate at ALB)
+echo "Deploying non-TLS ingress for demo app..."
+export LOAD_BALANCER_HOSTNAME=$INGRESS_HOSTNAME
+envsubst < "$(dirname "$0")/manifests/non-tls-ingress.yaml" | kubectl apply -f -
+
 # Create certificate based on type
 if [[ "$CERT_TYPE" == "public" ]]; then
   echo "Using existing public certificate: $PUBLIC_CERT_ARN"
@@ -101,9 +106,8 @@ else
   echo "Certificate ARN: $CERT_ARN"
 fi
 
-# Deploy Application Load Balancer
+# Deploy Application Load Balancer targeting ingress controller
 export CERT_ARN=$CERT_ARN
-export INGRESS_HOSTNAME=$INGRESS_HOSTNAME
 envsubst < "$(dirname "$0")/manifests/load-balancer.yaml" | kubectl apply -f -
 
 echo "Waiting for load balancer to be ready..."
