@@ -5,6 +5,7 @@ set -euo pipefail
 REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
 CERT_TYPE=${CERT_TYPE:-private}
+PUBLIC_CERT_ARN=""
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
       CERT_TYPE="$2"
       shift 2
       ;;
+    --public-cert-arn)
+      PUBLIC_CERT_ARN="$2"
+      shift 2
+      ;;
     *)
       echo "Unknown option: $1"
       exit 1
@@ -30,6 +35,11 @@ done
 
 if [[ "$CERT_TYPE" != "public" && "$CERT_TYPE" != "private" ]]; then
   echo "Error: --cert-type must be either 'public' or 'private'"
+  exit 1
+fi
+
+if [[ "$CERT_TYPE" == "public" && -z "$PUBLIC_CERT_ARN" ]]; then
+  echo "Error: --public-cert-arn is required when --cert-type is 'public'"
   exit 1
 fi
 
@@ -52,17 +62,21 @@ echo "Found ingress hostname: $INGRESS_HOSTNAME"
 
 # Create certificate based on type
 if [[ "$CERT_TYPE" == "public" ]]; then
-  echo "Creating public certificate via ACM..."
-  CERT_ARN=$(aws acm request-certificate \
-    --domain-name "*.elb.amazonaws.com" \
-    --validation-method DNS \
+  echo "Using existing public certificate: $PUBLIC_CERT_ARN"
+  
+  # Verify certificate exists and is issued
+  CERT_STATUS=$(aws acm describe-certificate \
+    --certificate-arn $PUBLIC_CERT_ARN \
     --region $REGION \
-    --query 'CertificateArn' \
+    --query 'Certificate.Status' \
     --output text)
   
-  echo "Certificate ARN: $CERT_ARN"
-  echo "Waiting for certificate validation (this may take several minutes)..."
-  aws acm wait certificate-validated --certificate-arn $CERT_ARN --region $REGION
+  if [[ "$CERT_STATUS" != "ISSUED" ]]; then
+    echo "Error: Certificate $PUBLIC_CERT_ARN is not in ISSUED status (current: $CERT_STATUS)"
+    exit 1
+  fi
+  
+  CERT_ARN=$PUBLIC_CERT_ARN
   
 else
   echo "Using private certificate from AWS Private CA..."

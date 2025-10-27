@@ -28,6 +28,7 @@ This setup:
 - `--cluster-name`: Name of the EKS cluster (default: aws-pca-k8s-demo)
 - `--region`: AWS region (default: us-east-1)
 - `--cert-type`: Certificate type - 'public' or 'private' (default: private)
+- `--public-cert-arn`: ARN of existing public certificate (required when cert-type is 'public')
 
 ### Examples
 
@@ -36,15 +37,17 @@ Deploy with private certificate (default):
 ./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1
 ```
 
-Deploy with public certificate:
+Deploy with existing public certificate:
 ```bash
-./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 --cert-type public
+./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
+  --cert-type public --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
 ```
 
 ## Certificate Types
 
 ### Public Certificate
-- Uses AWS Certificate Manager to issue a public certificate
+- Uses an existing public certificate from AWS Certificate Manager
+- Certificate must be in ISSUED status before deployment
 - Automatically validated via DNS
 - Trusted by all browsers and clients
 - Suitable for production workloads
