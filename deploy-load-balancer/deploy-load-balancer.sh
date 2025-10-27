@@ -143,39 +143,49 @@ if [[ -z "$NLB_HOSTNAME" ]]; then
 else
   echo "NLB provisioned: $NLB_HOSTNAME"
   
-  # DNS setup instructions for public certificate
+  # DNS setup for certificates
+  CERT_DOMAIN=""
   if [[ "$CERT_TYPE" == "public" ]]; then
     CERT_DOMAIN=$(aws acm describe-certificate \
       --certificate-arn $PUBLIC_CERT_ARN \
       --region $REGION \
       --query 'Certificate.DomainName' \
       --output text)
+  elif [[ -n "$HOSTED_ZONE_ID" ]]; then
+    # For private certificates, use NLB hostname as the domain
+    CERT_DOMAIN=$NLB_HOSTNAME
+  fi
+  
+  if [[ -n "$CERT_DOMAIN" && -n "$HOSTED_ZONE_ID" ]]; then
+    echo "Creating DNS record..."
+    aws route53 change-resource-record-sets \
+      --hosted-zone-id $HOSTED_ZONE_ID \
+      --change-batch "{
+        \"Changes\": [{
+          \"Action\": \"UPSERT\",
+          \"ResourceRecordSet\": {
+            \"Name\": \"$CERT_DOMAIN\",
+            \"Type\": \"CNAME\",
+            \"TTL\": 300,
+            \"ResourceRecords\": [{\"Value\": \"$NLB_HOSTNAME\"}]
+          }
+        }]
+      }"
+    echo "DNS record created: $CERT_DOMAIN -> $NLB_HOSTNAME"
+  elif [[ "$CERT_TYPE" == "public" ]]; then
+    CERT_DOMAIN=$(aws acm describe-certificate \
+      --certificate-arn $PUBLIC_CERT_ARN \
+      --region $REGION \
+      --query 'Certificate.DomainName' \
+      --output text)
     
-    if [[ -n "$HOSTED_ZONE_ID" ]]; then
-      echo "Creating DNS record..."
-      aws route53 change-resource-record-sets \
-        --hosted-zone-id $HOSTED_ZONE_ID \
-        --change-batch "{
-          \"Changes\": [{
-            \"Action\": \"UPSERT\",
-            \"ResourceRecordSet\": {
-              \"Name\": \"$CERT_DOMAIN\",
-              \"Type\": \"CNAME\",
-              \"TTL\": 300,
-              \"ResourceRecords\": [{\"Value\": \"$NLB_HOSTNAME\"}]
-            }
-          }]
-        }"
-      echo "DNS record created: $CERT_DOMAIN -> $NLB_HOSTNAME"
-    else
-      echo ""
-      echo "=== DNS Setup Required ==="
-      echo "For the public certificate to work, create a DNS record:"
-      echo "Domain: $CERT_DOMAIN"
-      echo "Type: CNAME"
-      echo "Value: $NLB_HOSTNAME"
-      echo ""
-    fi
+    echo ""
+    echo "=== DNS Setup Required ==="
+    echo "For the public certificate to work, create a DNS record:"
+    echo "Domain: $CERT_DOMAIN"
+    echo "Type: CNAME"
+    echo "Value: $NLB_HOSTNAME"
+    echo ""
   fi
   
   # Wait for NLB to be ready to accept traffic

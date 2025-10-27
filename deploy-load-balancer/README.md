@@ -29,7 +29,7 @@ This setup:
 - `--region`: AWS region (default: us-east-1)
 - `--public-cert-arn`: ARN of existing public certificate (if provided, uses public certificate)
 - `--private-ca-arn`: ARN of AWS Private CA (required for private certificates)
-- `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation (requires public-cert-arn)
+- `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation (works with both certificate types)
 
 ### Examples
 
@@ -37,6 +37,13 @@ Deploy with private certificate:
 ```bash
 ./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
   --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012
+```
+
+Deploy with private certificate and DNS record creation:
+```bash
+./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
+  --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012 \
+  --hosted-zone-id Z1234567890ABC
 ```
 
 Deploy with existing public certificate:
@@ -68,7 +75,9 @@ After deployment, the script will output the hostname of the Network Load Balanc
 https://<nlb-hostname>
 ```
 
-For public certificates with DNS records created, you can also access via the certificate domain name.
+If a hosted zone ID was provided, a DNS CNAME record will be created automatically:
+- For public certificates: Points the certificate domain to the NLB
+- For private certificates: Creates a CNAME record using the NLB hostname as the domain name
 
 ## Architecture
 
