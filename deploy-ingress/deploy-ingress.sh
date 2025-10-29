@@ -152,15 +152,20 @@ if [[ -n "$PUBLIC_CERT_ARN" ]]; then
   # Decrypt the private key
   openssl rsa -in /tmp/encrypted_key.pem -out /tmp/key.pem -passin pass:"$PASSPHRASE"
   
-  # Create TLS secret in ingress-nginx namespace for proper access
+  # Create TLS secret in demo-app namespace
+  kubectl create namespace demo-app --dry-run=client -o yaml | kubectl apply -f -
   kubectl create secret tls demo-app-tls \
     --cert=/tmp/cert-with-chain.pem \
     --key=/tmp/key.pem \
-    --namespace ingress-nginx \
+    --namespace demo-app \
     --dry-run=client -o yaml | kubectl apply -f -
   
-  # Create RBAC for cross-namespace access
-  kubectl create namespace demo-app --dry-run=client -o yaml | kubectl apply -f -
+  # Create RBAC for ingress controller to access demo-app namespace secrets
+  kubectl create rolebinding ingress-nginx-secrets \
+    --clusterrole=ingress-nginx \
+    --serviceaccount=ingress-nginx:ingress-nginx \
+    --namespace=demo-app \
+    --dry-run=client -o yaml | kubectl apply -f -
   
   # Clean up temporary files
   rm -f /tmp/cert.pem /tmp/chain.pem /tmp/cert-with-chain.pem /tmp/key.pem /tmp/encrypted_key.pem
