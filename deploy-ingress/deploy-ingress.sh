@@ -73,8 +73,10 @@ kubectl wait --namespace ingress-nginx \
 LOAD_BALANCER_HOSTNAME=$(kubectl get service -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 echo "Load balancer hostname: $LOAD_BALANCER_HOSTNAME"
 
-# Create DNS record if hosted zone ID is provided
-if [[ -n "$PUBLIC_CERT_ARN" && -n "$HOSTED_ZONE_ID" ]]; then
+# Handle certificate provisioning based on type
+if [[ -n "$PUBLIC_CERT_ARN" ]]; then
+  echo "Using existing public certificate: $PUBLIC_CERT_ARN"
+  
   # Extract domain from certificate
   CERT_DOMAIN=$(aws acm describe-certificate \
     --certificate-arn $PUBLIC_CERT_ARN \
@@ -82,6 +84,21 @@ if [[ -n "$PUBLIC_CERT_ARN" && -n "$HOSTED_ZONE_ID" ]]; then
     --query 'Certificate.DomainName' \
     --output text)
   
+  # Verify certificate exists and is issued
+  CERT_STATUS=$(aws acm describe-certificate \
+    --certificate-arn $PUBLIC_CERT_ARN \
+    --region $REGION \
+    --query 'Certificate.Status' \
+    --output text)
+  
+  if [[ "$CERT_STATUS" != "ISSUED" ]]; then
+    echo "Error: Certificate $PUBLIC_CERT_ARN is not in ISSUED status (current: $CERT_STATUS)"
+    exit 1
+  fi
+fi
+
+# Create DNS record if hosted zone ID is provided
+if [[ -n "$PUBLIC_CERT_ARN" && -n "$HOSTED_ZONE_ID" ]]; then
   echo "Creating DNS record..."
   aws route53 change-resource-record-sets \
     --hosted-zone-id $HOSTED_ZONE_ID \
@@ -99,45 +116,54 @@ if [[ -n "$PUBLIC_CERT_ARN" && -n "$HOSTED_ZONE_ID" ]]; then
   echo "DNS record created: $CERT_DOMAIN -> $LOAD_BALANCER_HOSTNAME"
 fi
 
-# Handle certificate provisioning based on type
+# Export certificate if using public certificate
 if [[ -n "$PUBLIC_CERT_ARN" ]]; then
-  echo "Using existing public certificate: $PUBLIC_CERT_ARN"
   
-  # Verify certificate exists and is issued
-  CERT_STATUS=$(aws acm describe-certificate \
-    --certificate-arn $PUBLIC_CERT_ARN \
-    --region $REGION \
-    --query 'Certificate.Status' \
-    --output text)
+  # Export certificate with full chain for Kubernetes secret
+  echo "Exporting certificate with full chain for Kubernetes..."
+  PASSPHRASE="password"
+  PASSPHRASE_B64=$(echo -n "$PASSPHRASE" | base64)
   
-  if [[ "$CERT_STATUS" != "ISSUED" ]]; then
-    echo "Error: Certificate $PUBLIC_CERT_ARN is not in ISSUED status (current: $CERT_STATUS)"
-    exit 1
-  fi
-  
-  # Export certificate for Kubernetes secret
-  echo "Exporting certificate for Kubernetes..."
+  # Export certificate and chain
   aws acm export-certificate \
     --certificate-arn $PUBLIC_CERT_ARN \
     --region $REGION \
+    --passphrase "$PASSPHRASE_B64" \
     --query 'Certificate' \
     --output text > /tmp/cert.pem
   
   aws acm export-certificate \
     --certificate-arn $PUBLIC_CERT_ARN \
     --region $REGION \
-    --query 'PrivateKey' \
-    --output text > /tmp/key.pem
+    --passphrase "$PASSPHRASE_B64" \
+    --query 'CertificateChain' \
+    --output text > /tmp/chain.pem
   
-  # Create Kubernetes secret
+  aws acm export-certificate \
+    --certificate-arn $PUBLIC_CERT_ARN \
+    --region $REGION \
+    --passphrase "$PASSPHRASE_B64" \
+    --query 'PrivateKey' \
+    --output text > /tmp/encrypted_key.pem
+  
+  # Combine certificate and chain
+  cat /tmp/cert.pem /tmp/chain.pem > /tmp/cert-with-chain.pem
+  
+  # Decrypt the private key
+  openssl rsa -in /tmp/encrypted_key.pem -out /tmp/key.pem -passin pass:"$PASSPHRASE"
+  
+  # Create TLS secret in ingress-nginx namespace for proper access
   kubectl create secret tls demo-app-tls \
-    --cert=/tmp/cert.pem \
+    --cert=/tmp/cert-with-chain.pem \
     --key=/tmp/key.pem \
-    --namespace demo-app \
+    --namespace ingress-nginx \
     --dry-run=client -o yaml | kubectl apply -f -
   
+  # Create RBAC for cross-namespace access
+  kubectl create namespace demo-app --dry-run=client -o yaml | kubectl apply -f -
+  
   # Clean up temporary files
-  rm -f /tmp/cert.pem /tmp/key.pem
+  rm -f /tmp/cert.pem /tmp/chain.pem /tmp/cert-with-chain.pem /tmp/key.pem /tmp/encrypted_key.pem
   
 else
   echo "Using private certificate from AWS Private CA via cert-manager..."
@@ -147,6 +173,7 @@ echo "Deploying a demo application..."
 export LOAD_BALANCER_HOSTNAME=$LOAD_BALANCER_HOSTNAME
 
 if [[ -n "$PUBLIC_CERT_ARN" ]]; then
+  export CERT_DOMAIN=$CERT_DOMAIN
   envsubst < "$(dirname "$0")/manifests/demo-app-public.yaml" | kubectl apply -f -
 else
   envsubst < "$(dirname "$0")/manifests/demo-app-private.yaml" | kubectl apply -f -
