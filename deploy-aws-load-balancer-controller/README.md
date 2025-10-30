@@ -61,64 +61,29 @@ Deploy with private certificate (requires Private CA):
 2. **Load Balancer**: Deploys an internal Network Load Balancer with the private certificate for TLS termination
 3. **Application Access**: The hello world application is accessible via HTTPS using the private certificate (requires trust of the Private CA)
 
-## Post-Deployment Steps
+## Post-Deployment
 
-### For Public Certificates
+The script automatically:
+1. Waits for certificates to be issued
+2. Retrieves the certificate ARN
+3. Deploys the load balancer with the correct certificate
+4. Waits for the load balancer to be ready
+5. Displays the endpoint for testing
 
-1. Wait for certificate validation:
-   ```bash
-   kubectl get certificate public-cert -n demo-app -w
-   ```
+### Testing the Application
 
-2. Check external-dns logs:
-   ```bash
-   kubectl logs -n kube-system -l app.kubernetes.io/name=external-dns
-   ```
+After deployment completes, test the application:
 
-3. Get the load balancer endpoint:
-   ```bash
-   kubectl get service hello-world-nlb -n demo-app
-   ```
+**For Public Certificates:**
+```bash
+curl -k https://your-domain.com
+```
 
-4. Test the application:
-   ```bash
-   curl -k https://your-domain.com
-   ```
-
-### For Private Certificates
-
-1. Wait for certificate creation:
-   ```bash
-   kubectl get certificate private-cert -n demo-app -w
-   ```
-
-2. Get the internal load balancer endpoint:
-   ```bash
-   kubectl get service hello-world-nlb-private -n demo-app
-   ```
-
-3. Test from within the VPC (requires Private CA trust):
-   ```bash
-   curl -k https://internal-load-balancer-dns-name
-   ```
-
-## Manual Configuration Required
-
-After deployment, you'll need to update the certificate ARNs in the load balancer service annotations:
-
-1. Get the certificate ARN:
-   ```bash
-   # For public certificates
-   kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.certificateARN}'
-   
-   # For private certificates  
-   kubectl get certificate private-cert -n demo-app -o jsonpath='{.status.certificateARN}'
-   ```
-
-2. Update the service annotation with the actual certificate ARN:
-   ```bash
-   kubectl patch service hello-world-nlb -n demo-app -p '{"metadata":{"annotations":{"service.beta.kubernetes.io/aws-load-balancer-ssl-cert":"ACTUAL_CERT_ARN"}}}'
-   ```
+**For Private Certificates:**
+```bash
+# Get the load balancer hostname from the script output
+curl -k https://LOAD-BALANCER-HOSTNAME
+```
 
 ## Troubleshooting
 

@@ -164,19 +164,48 @@ aws eks create-addon --cluster-name $CLUSTER_NAME --addon-name external-dns --re
 echo "Deploying demo application..."
 kubectl apply -f manifests/hello-world-app.yaml
 
-# Deploy certificate and load balancer based on type
+# Deploy certificate and wait for it to be ready
 if [[ "$CERT_TYPE" == "public" ]]; then
-  echo "Deploying public certificate and load balancer..."
+  echo "Deploying public certificate..."
   envsubst < manifests/public-certificate.yaml | kubectl apply -f -
-  envsubst < manifests/public-load-balancer.yaml | kubectl apply -f -
+  
+  echo "Waiting for public certificate to be issued..."
+  kubectl wait --for=condition=Ready certificate/public-cert -n demo-app --timeout=600s
+  
+  CERT_ARN=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.certificateARN}')
+  SERVICE_NAME="hello-world-nlb"
 else
-  echo "Deploying private certificate and load balancer..."
+  echo "Deploying private certificate..."
   kubectl apply -f manifests/private-certificate.yaml
-  kubectl apply -f manifests/private-load-balancer.yaml
+  
+  echo "Waiting for private certificate to be issued..."
+  kubectl wait --for=condition=Ready certificate/private-cert -n demo-app --timeout=300s
+  
+  CERT_ARN=$(kubectl get certificate private-cert -n demo-app -o jsonpath='{.status.certificateARN}')
+  SERVICE_NAME="hello-world-nlb-private"
 fi
 
+echo "Certificate ARN: $CERT_ARN"
+
+# Deploy load balancer with actual certificate ARN
+echo "Deploying load balancer with certificate..."
+if [[ "$CERT_TYPE" == "public" ]]; then
+  export CERT_ARN
+  envsubst < manifests/public-load-balancer.yaml | kubectl apply -f -
+else
+  export CERT_ARN
+  envsubst < manifests/private-load-balancer.yaml | kubectl apply -f -
+fi
+
+echo "Waiting for load balancer to be ready..."
+kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' service/$SERVICE_NAME -n demo-app --timeout=300s
+
+LB_HOSTNAME=$(kubectl get service $SERVICE_NAME -n demo-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+
 echo "=== Deployment Complete ==="
-echo "Wait for the certificate to be issued and the load balancer to be ready."
-echo "You can check the status with:"
-echo "kubectl get certificate -n demo-app"
-echo "kubectl get service -n demo-app"
+echo "Load Balancer Hostname: $LB_HOSTNAME"
+if [[ "$CERT_TYPE" == "public" ]]; then
+  echo "Test with: curl -k https://$DOMAIN_NAME"
+else
+  echo "Test with: curl -k https://$LB_HOSTNAME"
+fi
