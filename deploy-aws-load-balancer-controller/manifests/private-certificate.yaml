@@ -4,10 +4,10 @@ metadata:
   name: private-cert
   namespace: demo-app
 spec:
-  domainName: hello-world.internal
-  certificateAuthorityARN: "arn:aws:acm-pca:${AWS_REGION}:${AWS_ACCOUNT_ID}:certificate-authority/REPLACE_WITH_CA_ARN"
+  domainName: ${DOMAIN_NAME:-hello-world.internal}
+  certificateAuthorityARN: "${CA_ARN}"
   subjectAlternativeNames:
-  - "*.hello-world.internal"
+  - "*.${DOMAIN_NAME:-hello-world.internal}"
   tags:
     Environment: demo
     Application: hello-world

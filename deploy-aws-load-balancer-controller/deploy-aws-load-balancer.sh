@@ -5,6 +5,7 @@ REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
 CERT_TYPE="public"
 DOMAIN_NAME=""
+PRIVATE_CA_ARN=""
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -23,6 +24,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --domain-name)
       DOMAIN_NAME="$2"
+      shift 2
+      ;;
+    --private-ca-arn)
+      PRIVATE_CA_ARN="$2"
       shift 2
       ;;
     *)
@@ -184,14 +189,27 @@ if [[ "$CERT_TYPE" == "public" ]]; then
   
   CERT_ARN=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.certificateARN}')
 else
+  echo "Getting Private CA ARN..."
+  if [[ -n "$PRIVATE_CA_ARN" ]]; then
+    CA_ARN="$PRIVATE_CA_ARN"
+    echo "Using provided Private CA: $CA_ARN"
+  else
+    CA_ARN=$(kubectl get certificateauthority root-ca -o jsonpath='{.status.ackResourceMetadata.arn}' 2>/dev/null)
+    if [[ -z "$CA_ARN" ]]; then
+      echo "Error: Could not find root-ca CertificateAuthority resource. Please run deploy-core-pki first or provide --private-ca-arn."
+      exit 1
+    fi
+    echo "Using Private CA from root-ca resource: $CA_ARN"
+  fi
+  
   echo "Deploying private certificate..."
-  kubectl apply -f manifests/private-certificate.yaml
+  export CA_ARN DOMAIN_NAME
+  envsubst < manifests/private-certificate.yaml | kubectl apply -f -
   
   echo "Waiting for private certificate to be issued..."
   kubectl wait --for=condition=Ready certificate/private-cert -n demo-app --timeout=300s
   
   CERT_ARN=$(kubectl get certificate private-cert -n demo-app -o jsonpath='{.status.certificateARN}')
-  DOMAIN_NAME=""
 fi
 
 echo "Certificate ARN: $CERT_ARN"
