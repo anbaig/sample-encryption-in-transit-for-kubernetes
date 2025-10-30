@@ -95,12 +95,22 @@ helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-contro
 echo "Installing ACK Controller for ACM..."
 kubectl create namespace ack-system --dry-run=client -o yaml | kubectl apply -f -
 
+# Create IAM policy for ACM Controller if it doesn't exist
+if ! aws iam get-policy --policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/ACKACMControllerIAMPolicy >/dev/null 2>&1; then
+  echo "Creating IAM policy for ACM Controller..."
+  curl -o acm_policy.json https://raw.githubusercontent.com/aws-controllers-k8s/acm-controller/main/config/iam/recommended-inline-policy
+  aws iam create-policy \
+    --policy-name ACKACMControllerIAMPolicy \
+    --policy-document file://acm_policy.json
+  rm acm_policy.json
+fi
+
 # Create Pod Identity Association for ACM Controller
 eksctl create podidentityassociation --cluster $CLUSTER_NAME --region $REGION \
   --namespace ack-system \
   --create-service-account \
   --service-account-name ack-acm-controller \
-  --permission-policy-arns arn:aws:iam::aws:policy/AWSCertificateManagerFullAccess 2>&1 | grep -v "already exists" || true
+  --permission-policy-arns arn:aws:iam::$AWS_ACCOUNT_ID:policy/ACKACMControllerIAMPolicy 2>&1 | grep -v "already exists" || true
 
 # Install ACM Controller
 helm repo add ack https://aws-controllers-k8s.github.io/charts
@@ -173,7 +183,6 @@ if [[ "$CERT_TYPE" == "public" ]]; then
   kubectl wait --for=condition=Ready certificate/public-cert -n demo-app --timeout=600s
   
   CERT_ARN=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.certificateARN}')
-  SERVICE_NAME="hello-world-nlb"
 else
   echo "Deploying private certificate..."
   kubectl apply -f manifests/private-certificate.yaml
@@ -182,25 +191,20 @@ else
   kubectl wait --for=condition=Ready certificate/private-cert -n demo-app --timeout=300s
   
   CERT_ARN=$(kubectl get certificate private-cert -n demo-app -o jsonpath='{.status.certificateARN}')
-  SERVICE_NAME="hello-world-nlb-private"
+  DOMAIN_NAME=""
 fi
 
 echo "Certificate ARN: $CERT_ARN"
 
 # Deploy load balancer with actual certificate ARN
 echo "Deploying load balancer with certificate..."
-if [[ "$CERT_TYPE" == "public" ]]; then
-  export CERT_ARN
-  envsubst < manifests/public-load-balancer.yaml | kubectl apply -f -
-else
-  export CERT_ARN
-  envsubst < manifests/private-load-balancer.yaml | kubectl apply -f -
-fi
+export CERT_ARN DOMAIN_NAME
+envsubst < manifests/load-balancer.yaml | kubectl apply -f -
 
 echo "Waiting for load balancer to be ready..."
-kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' service/$SERVICE_NAME -n demo-app --timeout=300s
+kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' service/hello-world-nlb -n demo-app --timeout=300s
 
-LB_HOSTNAME=$(kubectl get service $SERVICE_NAME -n demo-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+LB_HOSTNAME=$(kubectl get service hello-world-nlb -n demo-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
 echo "=== Deployment Complete ==="
 echo "Load Balancer Hostname: $LB_HOSTNAME"
