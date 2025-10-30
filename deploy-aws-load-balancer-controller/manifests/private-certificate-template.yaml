@@ -1,0 +1,16 @@
+# Template for private certificate - update the certificateAuthorityARN before applying
+# Get the CA ARN from the deploy-core-pki module output
+apiVersion: acm.services.k8s.aws/v1alpha1
+kind: Certificate
+metadata:
+  name: private-cert
+  namespace: demo-app
+spec:
+  domainName: hello-world.internal
+  # Replace with actual Private CA ARN from deploy-core-pki
+  certificateAuthorityARN: "arn:aws:acm-pca:REGION:ACCOUNT:certificate-authority/CA-ID"
+  subjectAlternativeNames:
+  - "*.hello-world.internal"
+  tags:
+    Environment: demo
+    Application: hello-world

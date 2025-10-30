@@ -1,0 +1,13 @@
+apiVersion: acm.services.k8s.aws/v1alpha1
+kind: Certificate
+metadata:
+  name: private-cert
+  namespace: demo-app
+spec:
+  domainName: hello-world.internal
+  certificateAuthorityARN: "arn:aws:acm-pca:${AWS_REGION}:${AWS_ACCOUNT_ID}:certificate-authority/REPLACE_WITH_CA_ARN"
+  subjectAlternativeNames:
+  - "*.hello-world.internal"
+  tags:
+    Environment: demo
+    Application: hello-world

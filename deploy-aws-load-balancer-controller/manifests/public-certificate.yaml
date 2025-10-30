@@ -1,0 +1,13 @@
+apiVersion: acm.services.k8s.aws/v1alpha1
+kind: Certificate
+metadata:
+  name: public-cert
+  namespace: demo-app
+spec:
+  domainName: ${DOMAIN_NAME}
+  validationMethod: DNS
+  subjectAlternativeNames:
+  - "*.${DOMAIN_NAME}"
+  tags:
+    Environment: demo
+    Application: hello-world
