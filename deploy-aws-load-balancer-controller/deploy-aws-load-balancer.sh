@@ -60,14 +60,6 @@ echo "AWS Account ID: $AWS_ACCOUNT_ID"
 echo "Installing AWS Load Balancer Controller..."
 kubectl create namespace aws-load-balancer-system --dry-run=client -o yaml | kubectl apply -f -
 
-# Create Pod Identity Association for AWS Load Balancer Controller
-echo "Creating Pod Identity Association for AWS Load Balancer Controller..."
-eksctl create podidentityassociation --cluster $CLUSTER_NAME --region $REGION \
-  --namespace aws-load-balancer-system \
-  --create-service-account \
-  --service-account-name aws-load-balancer-controller \
-  --permission-policy-arns arn:aws:iam::$AWS_ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy 2>&1 | grep -v "already exists" || true
-
 # Create IAM policy if it doesn't exist
 if ! aws iam get-policy --policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy >/dev/null 2>&1; then
   echo "Creating IAM policy for AWS Load Balancer Controller..."
@@ -77,6 +69,14 @@ if ! aws iam get-policy --policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/AWSLoad
     --policy-document file://iam_policy.json
   rm iam_policy.json
 fi
+
+# Create Pod Identity Association for AWS Load Balancer Controller
+echo "Creating Pod Identity Association for AWS Load Balancer Controller..."
+eksctl create podidentityassociation --cluster $CLUSTER_NAME --region $REGION \
+  --namespace aws-load-balancer-system \
+  --create-service-account \
+  --service-account-name aws-load-balancer-controller \
+  --permission-policy-arns arn:aws:iam::$AWS_ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy 2>&1 | grep -v "already exists" || true
 
 # Install AWS Load Balancer Controller using Helm
 echo "Installing AWS Load Balancer Controller using Helm..."
