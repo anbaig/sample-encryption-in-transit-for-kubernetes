@@ -5,9 +5,3 @@ metadata:
   namespace: demo-app
 spec:
   domainName: ${DOMAIN_NAME}
-  validationMethod: DNS
-  subjectAlternativeNames:
-  - "*.${DOMAIN_NAME}"
-  tags:
-    Environment: demo
-    Application: hello-world

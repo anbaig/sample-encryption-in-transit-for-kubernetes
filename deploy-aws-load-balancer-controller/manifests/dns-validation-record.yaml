@@ -1,0 +1,12 @@
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: acm-validation-record
+  namespace: demo-app
+spec:
+  endpoints:
+  - dnsName: "${VALIDATION_NAME}"
+    recordTTL: 300
+    recordType: "${VALIDATION_TYPE}"
+    targets:
+    - "${VALIDATION_VALUE}"

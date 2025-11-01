@@ -3,7 +3,6 @@ set -euo pipefail
 
 REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
-CERT_TYPE="public"
 DOMAIN_NAME=""
 PRIVATE_CA_ARN=""
 
@@ -68,7 +67,7 @@ kubectl create namespace aws-load-balancer-system --dry-run=client -o yaml | kub
 # Create IAM policy if it doesn't exist
 if ! aws iam get-policy --policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy >/dev/null 2>&1; then
   echo "Creating IAM policy for AWS Load Balancer Controller..."
-  curl -o iam_policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.7.2/docs/install/iam_policy.json
+  curl -o iam_policy.json https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.14.1/docs/install/iam_policy.json
   aws iam create-policy \
     --policy-name AWSLoadBalancerControllerIAMPolicy \
     --policy-document file://iam_policy.json
@@ -85,8 +84,10 @@ eksctl create podidentityassociation --cluster $CLUSTER_NAME --region $REGION \
 
 # Install AWS Load Balancer Controller using Helm
 echo "Installing AWS Load Balancer Controller using Helm..."
-helm repo add eks https://aws.github.io/eks-charts
+helm repo add eks https://aws.github.io/eks-charts || true
 helm repo update
+
+VPC_ID=$(aws eks describe-cluster --name $CLUSTER_NAME --region $REGION --query "cluster.resourcesVpcConfig.vpcId" --output text)
 
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n aws-load-balancer-system \
@@ -94,7 +95,11 @@ helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-contro
   --set serviceAccount.create=false \
   --set serviceAccount.name=aws-load-balancer-controller \
   --set region=$REGION \
-  --set vpcId=$(aws eks describe-cluster --name $CLUSTER_NAME --region $REGION --query "cluster.resourcesVpcConfig.vpcId" --output text)
+  --set vpcId=$VPC_ID
+
+# Wait for AWS Load Balancer Controller to be ready
+echo "Waiting for AWS Load Balancer Controller to be ready..."
+kubectl wait --for=condition=available deployment/aws-load-balancer-controller -n aws-load-balancer-system --timeout=300s
 
 # Install ACK Controller for ACM
 echo "Installing ACK Controller for ACM..."
@@ -118,14 +123,23 @@ eksctl create podidentityassociation --cluster $CLUSTER_NAME --region $REGION \
   --permission-policy-arns arn:aws:iam::$AWS_ACCOUNT_ID:policy/ACKACMControllerIAMPolicy 2>&1 | grep -v "already exists" || true
 
 # Install ACM Controller
-helm repo add ack https://aws-controllers-k8s.github.io/charts
-helm repo update
+echo "Getting latest ACM controller version..."
+RELEASE_VERSION=$(curl -sL https://api.github.com/repos/aws-controllers-k8s/acm-controller/releases/latest | 
+                  jq -r '.tag_name | ltrimstr("v")')
 
-helm upgrade --install ack-acm-controller ack/acm-chart \
-  --namespace ack-system \
-  --set aws.region=$REGION \
-  --set serviceAccount.create=false \
-  --set serviceAccount.name=ack-acm-controller
+aws ecr-public get-login-password --region us-east-1 | 
+helm registry login --username AWS --password-stdin public.ecr.aws
+
+helm upgrade --install \
+    --create-namespace \
+    -n ack-system \
+    ack-acm-controller \
+    oci://public.ecr.aws/aws-controllers-k8s/acm-chart \
+    --version=$RELEASE_VERSION \
+    --set=aws.region=$REGION \
+    --set=serviceAccount.create=false \
+    --set=serviceAccount.name=ack-acm-controller \
+    --set=reconcile.defaultResyncPeriod=30
 
 # Install external-dns EKS add-on
 echo "Installing external-dns EKS add-on..."
@@ -167,13 +181,19 @@ fi
 
 # Create Pod Identity Association for external-dns
 eksctl create podidentityassociation --cluster $CLUSTER_NAME --region $REGION \
-  --namespace kube-system \
+  --namespace external-dns \
   --create-service-account \
   --service-account-name external-dns \
   --permission-policy-arns arn:aws:iam::$AWS_ACCOUNT_ID:policy/AllowExternalDNSUpdates 2>&1 | grep -v "already exists" || true
 
-# Install external-dns as EKS add-on
-aws eks create-addon --cluster-name $CLUSTER_NAME --addon-name external-dns --region $REGION --service-account-role-arn $(aws iam get-role --role-name eksctl-$CLUSTER_NAME-addon-iamserviceaccount-kube-system-external-dns-Role1 --query 'Role.Arn' --output text) 2>&1 | grep -v "already exists" || true
+# Install external-dns as EKS add-on with CRD source support
+echo "Installing external-dns EKS add-on with CRD sources..."
+aws eks create-addon --cluster-name $CLUSTER_NAME --addon-name external-dns --region $REGION \
+  --configuration-values '{"sources":["service","ingress","crd"]}' 2>&1 | grep -v "already exists" || true
+
+# Create additional RBAC permissions for external-dns to read DNSEndpoints across namespaces
+echo "Creating RBAC permissions for external-dns to access DNSEndpoints..."
+kubectl apply -f manifests/external-dns-rbac.yaml
 
 # Deploy demo application
 echo "Deploying demo application..."
@@ -182,12 +202,48 @@ kubectl apply -f manifests/hello-world-app.yaml
 # Deploy certificate and wait for it to be ready
 if [[ "$CERT_TYPE" == "public" ]]; then
   echo "Deploying public certificate..."
+  export DOMAIN_NAME
   envsubst < manifests/public-certificate.yaml | kubectl apply -f -
   
-  echo "Waiting for public certificate to be issued..."
-  kubectl wait --for=condition=Ready certificate/public-cert -n demo-app --timeout=600s
+  echo "Waiting for certificate to be created in ACM..."
+  kubectl wait --for=condition=ACK.ResourceSynced certificate/public-cert -n demo-app --timeout=300s
   
-  CERT_ARN=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.certificateARN}')
+  echo "Waiting for DNS validation records to be populated..."
+  while true; do
+    VALIDATION_NAME=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.domainValidations[0].resourceRecord.name}' 2>/dev/null || echo "")
+    VALIDATION_VALUE=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.domainValidations[0].resourceRecord.value}' 2>/dev/null || echo "")
+    VALIDATION_TYPE=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.domainValidations[0].resourceRecord.type_}' 2>/dev/null || echo "")
+    
+    if [[ -n "$VALIDATION_NAME" && -n "$VALIDATION_VALUE" && -n "$VALIDATION_TYPE" ]]; then
+      echo "DNS validation records populated successfully"
+      break
+    fi
+    
+    echo "Waiting for DNS validation records to be available..."
+    sleep 10
+  done
+  
+  # Remove trailing dot from VALIDATION_VALUE
+  VALIDATION_VALUE=${VALIDATION_VALUE%.}
+  
+  echo "Creating DNS validation record: $VALIDATION_NAME -> $VALIDATION_VALUE"
+  
+  # Create DNSEndpoint for external-dns to pick up
+  export VALIDATION_NAME VALIDATION_VALUE VALIDATION_TYPE
+  envsubst < manifests/dns-validation-record.yaml | kubectl apply -f -
+  
+  echo "Waiting for certificate validation to complete..."
+  while true; do
+    CERT_STATUS=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.status}' 2>/dev/null || echo "")
+    if [[ "$CERT_STATUS" == "ISSUED" ]]; then
+      echo "Certificate validation completed successfully"
+      break
+    fi
+    echo "Certificate status: $CERT_STATUS - waiting for ISSUED..."
+    sleep 15
+  done
+  
+  CERT_ARN=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.ackResourceMetadata.arn}')
 else
   echo "Getting Private CA ARN..."
   if [[ -n "$PRIVATE_CA_ARN" ]]; then
@@ -220,14 +276,16 @@ export CERT_ARN DOMAIN_NAME
 envsubst < manifests/load-balancer.yaml | kubectl apply -f -
 
 echo "Waiting for load balancer to be ready..."
-kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' service/hello-world-nlb -n demo-app --timeout=300s
+kubectl wait --for=jsonpath='{.status.loadBalancer.ingress[0].hostname}' ingress/hello-world-alb -n demo-app --timeout=300s
 
-LB_HOSTNAME=$(kubectl get service hello-world-nlb -n demo-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+LB_HOSTNAME=$(kubectl get ingress hello-world-alb -n demo-app -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
 
 echo "=== Deployment Complete ==="
 echo "Load Balancer Hostname: $LB_HOSTNAME"
 if [[ "$CERT_TYPE" == "public" ]]; then
-  echo "Test with: curl -k https://$DOMAIN_NAME"
+  echo "Test with: curl -k https://$DOMAIN_NAME/hello-world"
+  echo "Test with: curl -k https://$DOMAIN_NAME/certificate-status"
 else
-  echo "Test with: curl -k https://$LB_HOSTNAME"
+  echo "Test with: curl -k https://$LB_HOSTNAME/hello-world"
+  echo "Test with: curl -k https://$LB_HOSTNAME/certificate-status"
 fi
