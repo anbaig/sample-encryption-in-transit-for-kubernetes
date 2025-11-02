@@ -5,6 +5,7 @@ set -euo pipefail
 REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
 DOMAIN_NAME=""
+CERT_TYPE="private"
 
 # Function to wait for certificate to be issued
 wait_for_certificate_issued() {
@@ -37,6 +38,10 @@ while [[ $# -gt 0 ]]; do
       DOMAIN_NAME="$2"
       shift 2
       ;;
+    --cert-type)
+      CERT_TYPE="$2"
+      shift 2
+      ;;
     *)
       echo "Unknown option: $1"
       exit 1
@@ -47,11 +52,11 @@ done
 echo "=== Deploying TLS-enabled Ingress ==="
 echo "Cluster: $CLUSTER_NAME"
 echo "Region: $REGION"
+echo "Certificate Type: $CERT_TYPE"
 if [[ -n "$DOMAIN_NAME" ]]; then
-  echo "Certificate Type: public"
   echo "Domain: $DOMAIN_NAME"
 else
-  echo "Certificate Type: private"
+  echo "Domain: Will use load balancer hostname"
 fi
 
 export AWS_REGION=$REGION
@@ -75,8 +80,7 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   --set serviceAccount.name=ingress-nginx \
   --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
   --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"="internet-facing" \
-  --set controller.config.ssl-protocols="TLSv1.2 TLSv1.3" \
-  --set controller.config.use-forwarded-headers="true"
+  --set controller.service.enableHttp=false \
 
 echo "Waiting for the load balancer to be provisioned..."
 kubectl wait --namespace ingress-nginx \
@@ -88,7 +92,7 @@ LOAD_BALANCER_HOSTNAME=$(kubectl get service -n ingress-nginx ingress-nginx-cont
 echo "Load balancer hostname: $LOAD_BALANCER_HOSTNAME"
 
 # Handle certificate provisioning based on type
-if [[ -n "$DOMAIN_NAME" ]]; then
+if [[ "$CERT_TYPE" == "public" ]]; then
   echo "Deploying public certificate..."
   export DOMAIN_NAME
   envsubst < manifests/public-certificate.yaml | kubectl apply -f -
@@ -122,13 +126,12 @@ if [[ -n "$DOMAIN_NAME" ]]; then
   
   wait_for_certificate_issued "public-cert-ingress"
   
-  PUBLIC_CERT_ARN=$(kubectl get certificate public-cert-ingress -n demo-app -o jsonpath='{.status.ackResourceMetadata.arn}')
   CERT_DOMAIN="$DOMAIN_NAME"
 
   # Export certificate with full chain for Kubernetes secret
   echo "Exporting certificate with full chain for Kubernetes..."
   
-  # Currently the ACK ACM controller doesn't support creating export certificate
+  # Currently the ACK ACM controller doesn't support creating exportable certificates
   # To get around this, we can piggy back off of the ACK created certificate domain validation
   # completition by requesting a certificate with the same domain but export enabled to allow
   # us to have a exportable certificate for the same domain
@@ -152,10 +155,10 @@ if [[ -n "$DOMAIN_NAME" ]]; then
   
   echo "Exporting $EXPORTABLE_CERT_ARN into Kubernetes secret"
   
-  # Use plain text passphrase for OpenSSL, base64 for ACM
-  PASSPHRASE_PLAIN="testpassword123"
+  # Generate random passphrase for certificate export
+  PASSPHRASE_PLAIN=$(openssl rand -hex 16)
   PASSPHRASE=$(echo -n "$PASSPHRASE_PLAIN" | base64)
-  echo "Using passphrase for certificate export"
+  echo "Using randomly generated passphrase for certificate export"
   
   # Export and process certificate data directly
   echo "Exporting certificate data..."
@@ -189,7 +192,7 @@ if [[ -n "$DOMAIN_NAME" ]]; then
   CERT_WITH_CHAIN="${CERT_DATA}"$'\n'"${CHAIN_DATA}"
   
   echo "Creating Kubernetes TLS secret..."
-  kubectl create secret tls demo-app-tls \
+  kubectl create secret tls demo-app-tls-public \
     --cert=<(echo "$CERT_WITH_CHAIN") \
     --key=<(echo "$DECRYPTED_KEY") \
     --namespace demo-app \
@@ -206,8 +209,15 @@ fi
 echo "Deploying a demo application..."
 export LOAD_BALANCER_HOSTNAME=$LOAD_BALANCER_HOSTNAME
 
+# Determine the hostname to use
 if [[ -n "$DOMAIN_NAME" ]]; then
-  export CERT_DOMAIN=$CERT_DOMAIN
+  CERT_DOMAIN="$DOMAIN_NAME"
+else
+  CERT_DOMAIN="$LOAD_BALANCER_HOSTNAME"
+fi
+
+export CERT_DOMAIN
+if [[ "$CERT_TYPE" == "public" ]]; then
   envsubst < "$(dirname "$0")/manifests/demo-app-public.yaml" | kubectl apply -f -
 else
   envsubst < "$(dirname "$0")/manifests/demo-app-private.yaml" | kubectl apply -f -
@@ -215,14 +225,13 @@ fi
 
 echo "=== Deployment Complete ==="
 echo "Your TLS-enabled ingress is now available at:"
-if [[ -n "$DOMAIN_NAME" ]]; then
-  echo "https://${CERT_DOMAIN}"
-  echo "(Note: You need to create a DNS record: $CERT_DOMAIN -> $LOAD_BALANCER_HOSTNAME)"
-else
-  echo "https://${LOAD_BALANCER_HOSTNAME}"
+echo "https://${CERT_DOMAIN}"
+if [[ -n "$DOMAIN_NAME" && "$CERT_DOMAIN" != "$LOAD_BALANCER_HOSTNAME" ]]; then
+  echo "(Note: If you have external-dns configured, the DNS record should be created automatically."
+  echo " Otherwise, you need to manually create a DNS record: $CERT_DOMAIN -> $LOAD_BALANCER_HOSTNAME)"
 fi
 echo ""
-if [[ -z "$DOMAIN_NAME" ]]; then
+if [[ "$CERT_TYPE" == "private" ]]; then
   echo "Note: Since the certificate is issued by a private CA, your browser will show a warning."
   echo "To trust the certificate, you need to import the CA certificate into your trust store."
 else

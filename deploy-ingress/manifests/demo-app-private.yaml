@@ -39,20 +39,21 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: demo-app-ingress
+  name: demo-app-ingress-private
   namespace: demo-app
   annotations:
     kubernetes.io/ingress.class: nginx
-    ${CERT_TYPE_CONFIG:+cert-manager.io/issuer: "aws-pca-cluster-issuer"}
-    ${CERT_TYPE_CONFIG:+cert-manager.io/issuer-kind: AWSPCAClusterIssuer}
-    ${CERT_TYPE_CONFIG:+cert-manager.io/issuer-group: awspca.cert-manager.io}
+    external-dns.alpha.kubernetes.io/hostname: ${CERT_DOMAIN}
+    cert-manager.io/issuer: "aws-pca-cluster-issuer"
+    cert-manager.io/issuer-kind: AWSPCAClusterIssuer
+    cert-manager.io/issuer-group: awspca.cert-manager.io
 spec:
   tls:
   - hosts:
-    - ${LOAD_BALANCER_HOSTNAME}
-    secretName: demo-app-tls
+    - ${CERT_DOMAIN}
+    secretName: demo-app-tls-private
   rules:
-  - host: ${LOAD_BALANCER_HOSTNAME}
+  - host: ${CERT_DOMAIN}
     http:
       paths:
       - path: /
