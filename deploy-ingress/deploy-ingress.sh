@@ -4,8 +4,23 @@ set -euo pipefail
 # Default values
 REGION=${AWS_REGION:-us-east-1}
 CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
-PUBLIC_CERT_ARN=""
-HOSTED_ZONE_ID=""
+DOMAIN_NAME=""
+
+# Function to wait for certificate to be issued
+wait_for_certificate_issued() {
+  local cert_name="$1"
+  
+  echo "Waiting for certificate to be issued..."
+  while true; do
+    CERT_STATUS=$(kubectl get certificate "$cert_name" -n demo-app -o jsonpath='{.status.status}' 2>/dev/null || echo "")
+    if [[ "$CERT_STATUS" == "ISSUED" ]]; then
+      echo "Certificate issued successfully"
+      break
+    fi
+    echo "Certificate status: $CERT_STATUS - waiting for ISSUED..."
+    sleep 15
+  done
+}
 
 while [[ $# -gt 0 ]]; do
   key="$1"
@@ -18,12 +33,8 @@ while [[ $# -gt 0 ]]; do
       REGION="$2"
       shift 2
       ;;
-    --public-cert-arn)
-      PUBLIC_CERT_ARN="$2"
-      shift 2
-      ;;
-    --hosted-zone-id)
-      HOSTED_ZONE_ID="$2"
+    --domain)
+      DOMAIN_NAME="$2"
       shift 2
       ;;
     *)
@@ -36,8 +47,9 @@ done
 echo "=== Deploying TLS-enabled Ingress ==="
 echo "Cluster: $CLUSTER_NAME"
 echo "Region: $REGION"
-if [[ -n "$PUBLIC_CERT_ARN" ]]; then
+if [[ -n "$DOMAIN_NAME" ]]; then
   echo "Certificate Type: public"
+  echo "Domain: $DOMAIN_NAME"
 else
   echo "Certificate Type: private"
 fi
@@ -62,7 +74,9 @@ helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
   --set serviceAccount.create=false \
   --set serviceAccount.name=ingress-nginx \
   --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-type"="nlb" \
-  --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"="internet-facing"
+  --set controller.service.annotations."service\.beta\.kubernetes\.io/aws-load-balancer-scheme"="internet-facing" \
+  --set controller.config.ssl-protocols="TLSv1.2 TLSv1.3" \
+  --set controller.config.use-forwarded-headers="true"
 
 echo "Waiting for the load balancer to be provisioned..."
 kubectl wait --namespace ingress-nginx \
@@ -74,102 +88,117 @@ LOAD_BALANCER_HOSTNAME=$(kubectl get service -n ingress-nginx ingress-nginx-cont
 echo "Load balancer hostname: $LOAD_BALANCER_HOSTNAME"
 
 # Handle certificate provisioning based on type
-if [[ -n "$PUBLIC_CERT_ARN" ]]; then
-  echo "Using existing public certificate: $PUBLIC_CERT_ARN"
+if [[ -n "$DOMAIN_NAME" ]]; then
+  echo "Deploying public certificate..."
+  export DOMAIN_NAME
+  envsubst < manifests/public-certificate.yaml | kubectl apply -f -
   
-  # Extract domain from certificate
-  CERT_DOMAIN=$(aws acm describe-certificate \
-    --certificate-arn $PUBLIC_CERT_ARN \
-    --region $REGION \
-    --query 'Certificate.DomainName' \
-    --output text)
+  echo "Waiting for certificate to be created in ACM..."
+  kubectl wait --for=condition=ACK.ResourceSynced certificate/public-cert-ingress -n demo-app --timeout=300s
   
-  # Verify certificate exists and is issued
-  CERT_STATUS=$(aws acm describe-certificate \
-    --certificate-arn $PUBLIC_CERT_ARN \
-    --region $REGION \
-    --query 'Certificate.Status' \
-    --output text)
+  echo "Waiting for DNS validation records to be populated..."
+  while true; do
+    VALIDATION_NAME=$(kubectl get certificate public-cert-ingress -n demo-app -o jsonpath='{.status.domainValidations[0].resourceRecord.name}' 2>/dev/null || echo "")
+    VALIDATION_VALUE=$(kubectl get certificate public-cert-ingress -n demo-app -o jsonpath='{.status.domainValidations[0].resourceRecord.value}' 2>/dev/null || echo "")
+    VALIDATION_TYPE=$(kubectl get certificate public-cert-ingress -n demo-app -o jsonpath='{.status.domainValidations[0].resourceRecord.type_}' 2>/dev/null || echo "")
+    
+    if [[ -n "$VALIDATION_NAME" && -n "$VALIDATION_VALUE" && -n "$VALIDATION_TYPE" ]]; then
+      echo "DNS validation records populated successfully"
+      break
+    fi
+    
+    echo "Waiting for DNS validation records to be available..."
+    sleep 10
+  done
   
-  if [[ "$CERT_STATUS" != "ISSUED" ]]; then
-    echo "Error: Certificate $PUBLIC_CERT_ARN is not in ISSUED status (current: $CERT_STATUS)"
-    exit 1
-  fi
-fi
+  # Remove trailing dot from VALIDATION_VALUE
+  VALIDATION_VALUE=${VALIDATION_VALUE%.}
+  
+  echo "Creating DNS validation record: $VALIDATION_NAME -> $VALIDATION_VALUE"
+  
+  # Create DNSEndpoint for external-dns to pick up
+  export VALIDATION_NAME VALIDATION_VALUE VALIDATION_TYPE
+  envsubst < manifests/dns-validation-record.yaml | kubectl apply -f -
+  
+  wait_for_certificate_issued "public-cert-ingress"
+  
+  PUBLIC_CERT_ARN=$(kubectl get certificate public-cert-ingress -n demo-app -o jsonpath='{.status.ackResourceMetadata.arn}')
+  CERT_DOMAIN="$DOMAIN_NAME"
 
-# Create DNS record if hosted zone ID is provided
-if [[ -n "$PUBLIC_CERT_ARN" && -n "$HOSTED_ZONE_ID" ]]; then
-  echo "Creating DNS record..."
-  aws route53 change-resource-record-sets \
-    --hosted-zone-id $HOSTED_ZONE_ID \
-    --change-batch "{
-      \"Changes\": [{
-        \"Action\": \"UPSERT\",
-        \"ResourceRecordSet\": {
-          \"Name\": \"$CERT_DOMAIN\",
-          \"Type\": \"CNAME\",
-          \"TTL\": 300,
-          \"ResourceRecords\": [{\"Value\": \"$LOAD_BALANCER_HOSTNAME\"}]
-        }
-      }]
-    }"
-  echo "DNS record created: $CERT_DOMAIN -> $LOAD_BALANCER_HOSTNAME"
-fi
-
-# Export certificate if using public certificate
-if [[ -n "$PUBLIC_CERT_ARN" ]]; then
-  
   # Export certificate with full chain for Kubernetes secret
   echo "Exporting certificate with full chain for Kubernetes..."
-  PASSPHRASE="password"
-  PASSPHRASE_B64=$(echo -n "$PASSPHRASE" | base64)
   
-  # Export certificate and chain
-  aws acm export-certificate \
-    --certificate-arn $PUBLIC_CERT_ARN \
+  # Currently the ACK ACM controller doesn't support creating export certificate
+  # To get around this, we can piggy back off of the ACK created certificate domain validation
+  # completition by requesting a certificate with the same domain but export enabled to allow
+  # us to have a exportable certificate for the same domain
+  
+  echo "Requesting new exportable certificate for domain: $CERT_DOMAIN"
+  EXPORTABLE_CERT_ARN=$(aws acm request-certificate \
+    --domain-name "$CERT_DOMAIN" \
+    --validation-method DNS \
+    --options Export=ENABLED \
     --region $REGION \
-    --passphrase "$PASSPHRASE_B64" \
+    --query 'CertificateArn' \
+    --idempotency-token 'PublicCertIngress' \
+    --output text)
+  
+  echo "Waiting for certificate validation to complete..."
+  aws acm wait certificate-validated \
+    --certificate-arn "$EXPORTABLE_CERT_ARN" \
+    --region $REGION || true
+  
+  echo "Certificate validated successfully: $EXPORTABLE_CERT_ARN"
+  
+  echo "Exporting $EXPORTABLE_CERT_ARN into Kubernetes secret"
+  
+  # Use plain text passphrase for OpenSSL, base64 for ACM
+  PASSPHRASE_PLAIN="testpassword123"
+  PASSPHRASE=$(echo -n "$PASSPHRASE_PLAIN" | base64)
+  echo "Using passphrase for certificate export"
+  
+  # Export and process certificate data directly
+  echo "Exporting certificate data..."
+  CERT_DATA=$(aws acm export-certificate \
+    --certificate-arn $EXPORTABLE_CERT_ARN \
+    --region $REGION \
+    --passphrase "$PASSPHRASE" \
     --query 'Certificate' \
-    --output text > /tmp/cert.pem
+    --output text) || { echo "Certificate export failed"; exit 1; }
   
-  aws acm export-certificate \
-    --certificate-arn $PUBLIC_CERT_ARN \
+  echo "Exporting certificate chain..."
+  CHAIN_DATA=$(aws acm export-certificate \
+    --certificate-arn $EXPORTABLE_CERT_ARN \
     --region $REGION \
-    --passphrase "$PASSPHRASE_B64" \
+    --passphrase "$PASSPHRASE" \
     --query 'CertificateChain' \
-    --output text > /tmp/chain.pem
+    --output text) || { echo "Certificate chain export failed"; exit 1; }
   
-  aws acm export-certificate \
-    --certificate-arn $PUBLIC_CERT_ARN \
+  echo "Exporting private key..."
+  ENCRYPTED_KEY=$(aws acm export-certificate \
+    --certificate-arn $EXPORTABLE_CERT_ARN \
     --region $REGION \
-    --passphrase "$PASSPHRASE_B64" \
+    --passphrase "$PASSPHRASE" \
     --query 'PrivateKey' \
-    --output text > /tmp/encrypted_key.pem
+    --output text) || { echo "Private key export failed"; exit 1; }
   
-  # Combine certificate and chain
-  cat /tmp/cert.pem /tmp/chain.pem > /tmp/cert-with-chain.pem
+  # Decrypt private key
+  DECRYPTED_KEY=$(echo "$ENCRYPTED_KEY" | openssl rsa -passin pass:"$PASSPHRASE_PLAIN" 2>&1)
   
-  # Decrypt the private key
-  openssl rsa -in /tmp/encrypted_key.pem -out /tmp/key.pem -passin pass:"$PASSPHRASE"
+  echo "Combining certificate with chain..."
+  CERT_WITH_CHAIN="${CERT_DATA}"$'\n'"${CHAIN_DATA}"
   
-  # Create TLS secret in demo-app namespace
-  kubectl create namespace demo-app --dry-run=client -o yaml | kubectl apply -f -
+  echo "Creating Kubernetes TLS secret..."
   kubectl create secret tls demo-app-tls \
-    --cert=/tmp/cert-with-chain.pem \
-    --key=/tmp/key.pem \
+    --cert=<(echo "$CERT_WITH_CHAIN") \
+    --key=<(echo "$DECRYPTED_KEY") \
     --namespace demo-app \
     --dry-run=client -o yaml | kubectl apply -f -
+  echo "Kubernetes TLS secret created successfully"
   
-  # Create RBAC for ingress controller to access demo-app namespace secrets
-  kubectl create rolebinding ingress-nginx-secrets \
-    --clusterrole=ingress-nginx \
-    --serviceaccount=ingress-nginx:ingress-nginx \
-    --namespace=demo-app \
-    --dry-run=client -o yaml | kubectl apply -f -
-  
-  # Clean up temporary files
-  rm -f /tmp/cert.pem /tmp/chain.pem /tmp/cert-with-chain.pem /tmp/key.pem /tmp/encrypted_key.pem
-  
+  # Create RBAC for ingress controller to access secrets
+  echo "Creating RBAC for ingress controller..."
+  kubectl apply -f "$(dirname "$0")/manifests/ingress-rbac.yaml"
 else
   echo "Using private certificate from AWS Private CA via cert-manager..."
 fi
@@ -177,7 +206,7 @@ fi
 echo "Deploying a demo application..."
 export LOAD_BALANCER_HOSTNAME=$LOAD_BALANCER_HOSTNAME
 
-if [[ -n "$PUBLIC_CERT_ARN" ]]; then
+if [[ -n "$DOMAIN_NAME" ]]; then
   export CERT_DOMAIN=$CERT_DOMAIN
   envsubst < "$(dirname "$0")/manifests/demo-app-public.yaml" | kubectl apply -f -
 else
@@ -186,14 +215,14 @@ fi
 
 echo "=== Deployment Complete ==="
 echo "Your TLS-enabled ingress is now available at:"
-if [[ -n "$PUBLIC_CERT_ARN" && -n "$HOSTED_ZONE_ID" ]]; then
+if [[ -n "$DOMAIN_NAME" ]]; then
   echo "https://${CERT_DOMAIN}"
-  echo "(DNS: $CERT_DOMAIN -> $LOAD_BALANCER_HOSTNAME)"
+  echo "(Note: You need to create a DNS record: $CERT_DOMAIN -> $LOAD_BALANCER_HOSTNAME)"
 else
   echo "https://${LOAD_BALANCER_HOSTNAME}"
 fi
 echo ""
-if [[ -z "$PUBLIC_CERT_ARN" ]]; then
+if [[ -z "$DOMAIN_NAME" ]]; then
   echo "Note: Since the certificate is issued by a private CA, your browser will show a warning."
   echo "To trust the certificate, you need to import the CA certificate into your trust store."
 else

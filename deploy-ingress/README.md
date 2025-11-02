@@ -1,64 +1,27 @@
-# Deploy TLS-enabled Ingress
+# Deploy TLS-enabled NGINX Ingress
 
-This module demonstrates how to deploy a TLS-enabled service to your cluster, behind an AWS Load Balancer.
+This module demonstrates how to deploy a TLS-enabled service to your cluster behind an AWS Network Load Balancer using NGINX Ingress Controller. It showcases TLS termination at the ingress level using certificates provisioned by AWS Certificate Manager.
 
 ## Prerequisites
 
-Before running this script, ensure your EKS cluster meets these requirements:
-
-### Required Cluster State
-- **Clean cluster**: No existing NGINX ingress controllers or conflicting ingress resources
-- **RBAC permissions**: Your kubectl context must have cluster-admin permissions
-- **AWS Load Balancer Controller**: Should NOT be installed (this script uses NGINX ingress with NLB)
-- **Service account**: No existing `ingress-nginx` service account in the `ingress-nginx` namespace
-
-### Required Tools
-- `kubectl` configured for your EKS cluster
-- `eksctl` installed and configured
-- `helm` v3.x installed
-- `aws` CLI configured with appropriate permissions
-- `openssl` for certificate processing
-
-### AWS Permissions Required
-- ACM: `DescribeCertificate`, `ExportCertificate`
-- Route53: `ChangeResourceRecordSets` (if using `--hosted-zone-id`)
-- EKS: `DescribeCluster`
-- IAM: `CreateRole`, `AttachRolePolicy` (for pod identity association)
-
-### Cluster State Verification
-
-Before running the script, verify your cluster state:
-
+Before running this module, you must first deploy the core PKI infrastructure:
 ```bash
-# Check for existing ingress controllers
-kubectl get pods -A | grep ingress
-
-# Check for existing ingress resources
-kubectl get ingress -A
-
-# Verify no conflicting load balancers
-kubectl get svc -A | grep LoadBalancer
-
-# Check RBAC permissions
-kubectl auth can-i create clusterroles
-kubectl auth can-i create clusterrolebindings
+../deploy-core-pki/deploy-core.sh --cluster-name <cluster-name> --region <region> --include-public-pki
 ```
-
-If any of these return existing resources, clean them up first or expect conflicts.
-
-### Certificate Requirements
-- For public certificates: Must be in `ISSUED` status in ACM
-- Certificate domain must match the intended hostname
-- Certificate must be in the same region as your EKS cluster
 
 ## Overview
 
-This setup:
-1. Installs the NGINX ingress controller with proper RBAC
-2. Deploys an AWS Network Load Balancer
-3. Deploys a demo application to the cluster
-4. Automatically provisions a certificate (public or private)
-5. Configures the ingress to process and terminate encrypted TLS connections with full certificate chain
+This module executes the following actions:
+1. Installs the [NGINX Ingress Controller](https://kubernetes.github.io/ingress-nginx/) with Pod Identity
+2. Deploys an AWS Network Load Balancer for internet-facing traffic
+3. Creates either a public or private certificate using the ACM controller from core PKI module
+4. For public certificates: Uses ExternalDNS with Route53 to automatically complete DNS validation challenges
+5. Exports certificate from ACM and creates Kubernetes TLS secret for ingress termination
+6. Deploys a demo application with TLS-enabled ingress configuration
+
+## Important Note
+
+**Certificate Renewal Limitation**: This approach is experimental for production use. While TLS termination works, there is no automated solution for updating the Kubernetes TLS secret when AWS Certificate Manager automatically renews certificates. Production deployments should implement a certificate synchronization mechanism.
 
 ## Usage
 
@@ -69,9 +32,8 @@ This setup:
 ### Optional Parameters
 
 - `--cluster-name`: Name of the EKS cluster (default: aws-pca-k8s-demo)
-- `--region`: AWS region (default: us-east-1)
-- `--public-cert-arn`: ARN of existing public certificate (if provided, uses public certificate)
-- `--hosted-zone-id`: Route53 hosted zone ID for DNS record creation (requires public certificate)
+- `--region`: AWS region (default: us-east-1)  
+- `--domain`: Domain name for public certificate (e.g., ingress-demo.example.com)
 
 ### Examples
 
@@ -80,91 +42,80 @@ Deploy with private certificate (default):
 ./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1
 ```
 
-Deploy with existing public certificate:
+Deploy with public certificate:
 ```bash
 ./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
+  --domain ingress-demo.example.com
 ```
 
-Deploy with public certificate and DNS automation:
-```bash
-./deploy-ingress.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012 \
-  --hosted-zone-id Z1D633PJN98FT9
-```
+## Key Features
 
-## Testing the Ingress
+- **Automatic Certificate Management**: Uses ACM Controller for certificate lifecycle
+- **DNS Validation Automation**: ExternalDNS handles DNS validation records for public certificates
+- **Secure Certificate Handling**: Certificate data processed in memory without temporary files
+- **Complete Certificate Chain**: Exports and uses full certificate chain for proper validation
+- **RBAC Integration**: Proper cluster-wide permissions for ingress controller
 
-After deployment, the script will output the hostname of the load balancer. You can access the demo application using:
+## Testing the Deployment
 
+After deployment, access the demo application:
+
+**Private certificates:**
 ```
 https://<load-balancer-hostname>
 ```
+*Note: Browser will show security warning due to private CA*
 
-If you provided a `--hosted-zone-id`, the script will also create a DNS record and you can access the application using your custom domain:
-
+**Public certificates:**
 ```
-https://<your-certificate-domain>
+https://<your-domain>
 ```
+*Note: Create DNS record: your-domain → load-balancer-hostname*
 
-**Note for private certificates**: Since the certificate is issued by a private CA, your browser will show a warning. To trust the certificate, you need to import the CA certificate into your trust store.
+### Certificate Verification
 
-**Note for public certificates**: The certificate should be trusted by browsers.
-
-## DNS Automation
-
-When using public certificates with the `--hosted-zone-id` parameter, the script automatically:
-1. Extracts the domain name from the ACM certificate
-2. Creates a CNAME record in Route53 pointing to the load balancer
-3. Displays the custom domain URL in the final output
-
-## Key Improvements
-
-This script has been updated to address common deployment issues:
-
-1. **Complete Certificate Chain**: Exports and uses the full certificate chain (leaf + intermediate + root) for proper browser trust
-2. **Proper Namespace Management**: Places TLS secrets in the `ingress-nginx` namespace for correct access permissions
-3. **Cross-Namespace Service Access**: Creates ExternalName service to allow ingress in `ingress-nginx` namespace to access apps in `demo-app` namespace
-4. **Modern Ingress Configuration**: Uses `ingressClassName` instead of deprecated annotations
-5. **Domain-Based Routing**: Uses certificate domain name for ingress rules instead of load balancer hostname
+Verify the certificate being served:
+```bash
+echo | openssl s_client -connect <hostname>:443 -servername <domain> 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **SSL Certificate Errors**: 
-   - Ensure the certificate includes the full chain (leaf + intermediate + root)
-   - Verify the certificate domain matches your hostname
-   - Check that the certificate is in ISSUED status
+**Certificate Validation Fails:**
+- Ensure ExternalDNS has Route53 permissions
+- Verify domain's hosted zone exists in Route53
+- Check DNS validation records are created
 
-2. **NGINX Controller Not Starting**:
-   - Verify the `ingress-nginx` service account exists
-   - Check cluster RBAC permissions
-   - Ensure no conflicting ingress controllers are installed
+**NGINX Controller Issues:**
+- Verify `ingress-nginx` service account exists
+- Check cluster RBAC permissions
+- Ensure no conflicting ingress controllers
 
-3. **Certificate Chain Issues**:
-   - If browsers show "untrusted certificate" errors, verify the full certificate chain is included
-   - Check that the TLS secret contains all certificates: `kubectl get secret demo-app-tls -n ingress-nginx -o yaml`
-   - Ensure the certificate was exported with both Certificate and CertificateChain from ACM
+**SSL Certificate Errors:**
+- Verify certificate includes full chain
+- Check certificate is in ISSUED status
+- Ensure domain matches hostname
 
-4. **DNS Resolution Issues**:
-   - Verify Route53 hosted zone permissions
-   - Check that the CNAME record was created correctly
-   - Allow time for DNS propagation (up to 5 minutes)
-
-5. **Load Balancer Not Accessible**:
-   - Verify security groups allow traffic on ports 80/443
-   - Check that the NLB was created successfully
-   - Ensure the target groups are healthy
+**"Kubernetes Ingress Controller Fake Certificate":**
+- Check TLS secret exists: `kubectl get secrets -n demo-app`
+- Verify ingress references correct secret name
+- Restart ingress controller: `kubectl rollout restart deployment/ingress-nginx-controller -n ingress-nginx`
 
 ### Cleanup
 
-To remove the deployment:
+Remove the deployment:
 ```bash
 kubectl delete namespace demo-app
 kubectl delete namespace ingress-nginx
+kubectl delete clusterrole ingress-nginx-secrets
+kubectl delete clusterrolebinding ingress-nginx-secrets
 ```
 
 ## Customization
 
-Modify the `manifests/demo-app.yaml` file to customize the demo application or add your own applications.
+Modify the manifest files to customize the deployment:
+- `manifests/demo-app-public.yaml` - Public certificate configuration
+- `manifests/demo-app-private.yaml` - Private certificate configuration  
+- `manifests/ingress-rbac.yaml` - RBAC permissions
