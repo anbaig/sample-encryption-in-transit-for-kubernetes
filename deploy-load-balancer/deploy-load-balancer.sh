@@ -57,8 +57,8 @@ if [[ "$CERT_TYPE" != "public" && "$CERT_TYPE" != "private" ]]; then
   exit 1
 fi
 
-if [[ "$CERT_TYPE" == "public" && -z "$DOMAIN_NAME" ]]; then
-  echo "Error: --domain-name is required for public certificates"
+if [[ -z "$DOMAIN_NAME" ]]; then
+  echo "Error: --domain-name is required for both public and private certificates"
   exit 1
 fi
 
