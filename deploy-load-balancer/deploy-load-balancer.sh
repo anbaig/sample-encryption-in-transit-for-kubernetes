@@ -341,6 +341,6 @@ if [[ "$CERT_TYPE" == "public" ]]; then
   echo "Test with: curl -k https://$DOMAIN_NAME/hello-world"
   echo "Test with: curl -k https://$DOMAIN_NAME/certificate-status"
 else
-  echo "Test with: curl -k https://$LB_HOSTNAME/hello-world"
-  echo "Test with: curl -k https://$LB_HOSTNAME/certificate-status"
+  echo "Test with: curl -k https://$DOMAIN_NAME/hello-world"
+  echo "Test with: curl -k https://$DOMAIN_NAME/certificate-status"
 fi

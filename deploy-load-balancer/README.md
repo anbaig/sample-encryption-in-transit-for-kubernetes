@@ -1,4 +1,4 @@
-# Deploy AWS Load Balancer Controller with TLS Certificates
+# Deploy AWS Application Load Balancer with TLS Certificates
 
 This module deploys the AWS Load Balancer Controller and demonstrates TLS termination at the Application Load Balancer level using either public or private certificates managed by AWS Certificate Manager (ACM). It showcases automatic DNS validation, certificate provisioning, and path-based routing with TLS encryption.
 
@@ -62,9 +62,8 @@ curl https://your-domain.com/foobar
 
 **For Private Certificates:**
 ```bash
-# Get the load balancer hostname from the script output
-curl -k https://LOAD-BALANCER-HOSTNAME/hello-world
-curl -k https://LOAD-BALANCER-HOSTNAME/foobar
+curl -k https://your-domain.com/hello-world
+curl -k https://you-domain.com/foobar
 ```
 
 ## Troubleshooting
