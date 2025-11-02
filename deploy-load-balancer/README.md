@@ -15,7 +15,8 @@ This module executes the following actions:
 1. Installs the [AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/) using Pod Identity
 2. Deploys demo applications (hello-world and foobar services)
 3. Creates either a public or private certificate using the ACM controller from core PKI module
-4. Configures an Application Load Balancer with HTTPS-only access and path-based routing
+4. For public certificates: Uses ExternalDNS with Route53 to automatically complete DNS validation challenges by creating the required CNAME records for certificate issuance
+5. Configures an Application Load Balancer with HTTPS-only access and path-based routing
 
 ## Usage
 
