@@ -39,20 +39,20 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: certificate-status
+  name: foobar
   namespace: demo-app
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: certificate-status
+      app: foobar
   template:
     metadata:
       labels:
-        app: certificate-status
+        app: foobar
     spec:
       containers:
-      - name: certificate-status
+      - name: foobar
         image: nginx:latest
         ports:
         - containerPort: 80
@@ -64,10 +64,10 @@ spec:
       volumes:
       - name: html
         configMap:
-          name: certificate-status-html
+          name: foobar-html
       - name: nginx-config
         configMap:
-          name: certificate-status-nginx-config
+          name: foobar-nginx-config
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -99,7 +99,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: certificate-status-nginx-config
+  name: foobar-nginx-config
   namespace: demo-app
 data:
   default.conf: |
@@ -107,7 +107,7 @@ data:
         listen 80;
         server_name _;
         
-        location /certificate-status {
+        location /foobar {
             alias /usr/share/nginx/html;
             try_files /index.html =404;
         }
@@ -134,84 +134,64 @@ data:
     <html>
     <head>
         <title>Hello World - Service 1</title>
+        <style>
+            body { font-family: Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 40px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }
+            p { color: #666; line-height: 1.6; }
+            .diagram { margin-top: 30px; padding: 20px; background: #f9f9f9; border-radius: 5px; text-align: center; }
+            .flow { font-family: monospace; font-size: 14px; color: #333; }
+            .arrow { color: #4CAF50; font-weight: bold; }
+        </style>
     </head>
     <body>
-        <h1>Hello World - Service 1!</h1>
-        <p>This is the first TLS-enabled application running on AWS Load Balancer Controller.</p>
-        <p>Path: /hello-world</p>
-        <p>Certificate validation successful!</p>
+        <div class="container">
+            <h1>Hello World - Service 1!</h1>
+            <p>This is the first TLS-enabled application running on AWS Load Balancer Controller.</p>
+            <p>Path: /hello-world</p>
+            
+            <div class="diagram">
+                <div class="flow">
+                    Application Load Balancer <span class="arrow">--></span> HelloWorld Service
+                </div>
+            </div>
+        </div>
     </body>
     </html>
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: certificate-status-html
+  name: foobar-html
   namespace: demo-app
 data:
   index.html: |
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Certificate Status Dashboard</title>
+        <title>Foobar - Service 2</title>
         <style>
-            body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; margin: 0; padding: 20px; }
-            .container { max-width: 800px; margin: 0 auto; }
-            .cert-card { background: rgba(255,255,255,0.1); border-radius: 10px; padding: 20px; margin: 20px 0; backdrop-filter: blur(10px); }
-            .status { font-size: 24px; font-weight: bold; color: #4CAF50; }
-            .detail { margin: 10px 0; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 5px; }
-            .blink { animation: blink 2s infinite; }
-            .pulse { animation: pulse 3s infinite; }
-            .slide { animation: slideIn 0.5s ease-out; }
-            @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0.3; } }
-            @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
-            @keyframes slideIn { from { transform: translateX(-100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-            .lock { font-size: 48px; text-align: center; margin: 20px 0; }
-            .counter { font-size: 20px; font-weight: bold; color: #FFD700; }
+            body { font-family: Arial, sans-serif; background: #f5f5f5; margin: 0; padding: 40px; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+            h1 { color: #333; border-bottom: 2px solid #2196F3; padding-bottom: 10px; }
+            p { color: #666; line-height: 1.6; }
+            .diagram { margin-top: 30px; padding: 20px; background: #f9f9f9; border-radius: 5px; text-align: center; }
+            .flow { font-family: monospace; font-size: 14px; color: #333; }
+            .arrow { color: #2196F3; font-weight: bold; }
         </style>
     </head>
     <body>
         <div class="container">
-            <div class="lock pulse">🔒</div>
-            <h1 style="text-align: center;">TLS Certificate Dashboard</h1>
+            <h1>Foobar - Service 2!</h1>
+            <p>This is the second TLS-enabled application running on AWS Load Balancer Controller.</p>
+            <p>Path: /foobar</p>
             
-            <div class="cert-card slide">
-                <div class="status blink">✅ CERTIFICATE VALIDATED</div>
-                <div class="detail"><strong>Path:</strong> /certificate-status</div>
-                <div class="detail"><strong>Encryption:</strong> TLS 1.3 with AES-256-GCM</div>
-                <div class="detail"><strong>Certificate Authority:</strong> AWS Certificate Manager</div>
-                <div class="detail"><strong>Load Balancer:</strong> Application Load Balancer (ALB)</div>
-                <div class="detail"><strong>Backend Protocol:</strong> HTTP (TLS terminated at ALB)</div>
-                <div class="detail"><strong>Uptime:</strong> <span class="counter" id="uptime">0</span> seconds</div>
-            </div>
-            
-            <div class="cert-card slide" style="animation-delay: 0.2s;">
-                <h3>🚀 Demo Features Active</h3>
-                <div class="detail">✓ DNS Validation via external-dns</div>
-                <div class="detail">✓ Automatic certificate provisioning</div>
-                <div class="detail">✓ Path-based routing demonstration</div>
-                <div class="detail">✓ Pod Identity authentication</div>
-                <div class="detail">✓ Internet-facing load balancer</div>
-                <div class="detail"><strong>Page Views:</strong> <span class="counter" id="views">1</span></div>
-            </div>
-            
-            <div style="text-align: center; margin-top: 30px; font-size: 18px;" class="slide" style="animation-delay: 0.4s;">
-                <p>🎯 <strong>Containers + Certificates = Secure!</strong></p>
-                <p><small>Last updated: <span id="timestamp"></span></small></p>
+            <div class="diagram">
+                <div class="flow">
+                    Application Load Balancer <span class="arrow">--></span> FooBar Service
+                </div>
             </div>
         </div>
-        
-        <script>
-            let startTime = Date.now();
-            let views = parseInt(localStorage.getItem('views') || '0') + 1;
-            localStorage.setItem('views', views);
-            document.getElementById('views').textContent = views;
-            document.getElementById('timestamp').textContent = new Date().toLocaleString();
-            
-            setInterval(() => {
-                document.getElementById('uptime').textContent = Math.floor((Date.now() - startTime) / 1000);
-            }, 1000);
-        </script>
     </body>
     </html>
 ---
@@ -231,11 +211,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: certificate-status-service
+  name: foobar-service
   namespace: demo-app
 spec:
   selector:
-    app: certificate-status
+    app: foobar
   ports:
   - port: 80
     targetPort: 80

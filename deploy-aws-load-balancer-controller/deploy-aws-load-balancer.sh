@@ -6,6 +6,22 @@ CLUSTER_NAME=${CLUSTER_NAME:-aws-pca-k8s-demo}
 DOMAIN_NAME=""
 PRIVATE_CA_ARN=""
 
+# Function to wait for certificate to be issued
+wait_for_certificate_issued() {
+  local cert_name="$1"
+  
+  echo "Waiting for certificate to be issued..."
+  while true; do
+    CERT_STATUS=$(kubectl get certificate "$cert_name" -n demo-app -o jsonpath='{.status.status}' 2>/dev/null || echo "")
+    if [[ "$CERT_STATUS" == "ISSUED" ]]; then
+      echo "Certificate issued successfully"
+      break
+    fi
+    echo "Certificate status: $CERT_STATUS - waiting for ISSUED..."
+    sleep 15
+  done
+}
+
 while [[ $# -gt 0 ]]; do
   key="$1"
   case $key in
@@ -46,7 +62,6 @@ if [[ "$CERT_TYPE" == "public" && -z "$DOMAIN_NAME" ]]; then
   exit 1
 fi
 
-echo "=== Deploying AWS Load Balancer Controller ==="
 echo "Cluster: $CLUSTER_NAME"
 echo "Region: $REGION"
 echo "Certificate Type: $CERT_TYPE"
@@ -115,12 +130,62 @@ if ! aws iam get-policy --policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/ACKACMC
   rm acm_policy.json
 fi
 
+# Create ACM PCA policy for private certificates if it doesn't exist -- This policy allows ACM to issue certificates from a Private CA
+if ! aws iam get-policy --policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/ACKACMControllerPCAPolicy >/dev/null 2>&1; then
+  echo "Creating ACM PCA policy for ACM Controller..."
+  cat > acm_pca_policy.json << EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "acm-pca:IssueCertificate",
+        "acm-pca:GetCertificate",
+        "acm-pca:DescribeCertificateAuthority"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+  aws iam create-policy \
+    --policy-name ACKACMControllerPCAPolicy \
+    --policy-document file://acm_pca_policy.json
+  rm acm_pca_policy.json
+fi
+
+# Create ACM PCA policy for private certificates if it doesn't exist -- This allows ACM to issue certificates from an AWS Private CA
+if ! aws iam get-policy --policy-arn arn:aws:iam::$AWS_ACCOUNT_ID:policy/AWSLoadBalancerControllerPCAPolicy >/dev/null 2>&1; then
+  echo "Creating ACM PCA policy for AWS Load Balancer Controller..."
+  cat > pca_policy.json << EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "acm-pca:IssueCertificate",
+        "acm-pca:GetCertificate",
+        "acm-pca:DescribeCertificateAuthority"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+  aws iam create-policy \
+    --policy-name AWSLoadBalancerControllerPCAPolicy \
+    --policy-document file://pca_policy.json
+  rm pca_policy.json
+fi
+
 # Create Pod Identity Association for ACM Controller
 eksctl create podidentityassociation --cluster $CLUSTER_NAME --region $REGION \
   --namespace ack-system \
   --create-service-account \
   --service-account-name ack-acm-controller \
-  --permission-policy-arns arn:aws:iam::$AWS_ACCOUNT_ID:policy/ACKACMControllerIAMPolicy 2>&1 | grep -v "already exists" || true
+  --permission-policy-arns arn:aws:iam::$AWS_ACCOUNT_ID:policy/ACKACMControllerIAMPolicy,arn:aws:iam::$AWS_ACCOUNT_ID:policy/ACKACMControllerPCAPolicy 2>&1 | grep -v "already exists" || true
 
 # Install ACM Controller
 echo "Getting latest ACM controller version..."
@@ -232,16 +297,7 @@ if [[ "$CERT_TYPE" == "public" ]]; then
   export VALIDATION_NAME VALIDATION_VALUE VALIDATION_TYPE
   envsubst < manifests/dns-validation-record.yaml | kubectl apply -f -
   
-  echo "Waiting for certificate validation to complete..."
-  while true; do
-    CERT_STATUS=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.status}' 2>/dev/null || echo "")
-    if [[ "$CERT_STATUS" == "ISSUED" ]]; then
-      echo "Certificate validation completed successfully"
-      break
-    fi
-    echo "Certificate status: $CERT_STATUS - waiting for ISSUED..."
-    sleep 15
-  done
+  wait_for_certificate_issued "public-cert"
   
   CERT_ARN=$(kubectl get certificate public-cert -n demo-app -o jsonpath='{.status.ackResourceMetadata.arn}')
 else
@@ -262,10 +318,9 @@ else
   export CA_ARN DOMAIN_NAME
   envsubst < manifests/private-certificate.yaml | kubectl apply -f -
   
-  echo "Waiting for private certificate to be issued..."
-  kubectl wait --for=condition=Ready certificate/private-cert -n demo-app --timeout=300s
+  wait_for_certificate_issued "private-cert"
   
-  CERT_ARN=$(kubectl get certificate private-cert -n demo-app -o jsonpath='{.status.certificateARN}')
+  CERT_ARN=$(kubectl get certificate private-cert -n demo-app -o jsonpath='{.status.ackResourceMetadata.arn}')
 fi
 
 echo "Certificate ARN: $CERT_ARN"

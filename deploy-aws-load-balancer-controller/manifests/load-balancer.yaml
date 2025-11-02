@@ -26,10 +26,10 @@ spec:
             name: hello-world-service
             port:
               number: 80
-      - path: /certificate-status
+      - path: /foobar
         pathType: Prefix
         backend:
           service:
-            name: certificate-status-service
+            name: foobar-service
             port:
               number: 80

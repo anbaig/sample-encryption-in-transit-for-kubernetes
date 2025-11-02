@@ -4,10 +4,5 @@ metadata:
   name: private-cert
   namespace: demo-app
 spec:
-  domainName: ${DOMAIN_NAME:-hello-world.internal}
+  domainName: ${DOMAIN_NAME}
   certificateAuthorityARN: "${CA_ARN}"
-  subjectAlternativeNames:
-  - "*.${DOMAIN_NAME:-hello-world.internal}"
-  tags:
-    Environment: demo
-    Application: hello-world
