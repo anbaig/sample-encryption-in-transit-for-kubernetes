@@ -1,99 +1,92 @@
-# Deploy Load Balancer with TLS
+# Deploy AWS Load Balancer Controller with TLS Certificates
 
-This module demonstrates how to deploy a Network Load Balancer (NLB) that points to your EKS cluster's ingress controller with TLS termination.
+This module deploys the AWS Load Balancer Controller and demonstrates TLS termination at the Application Load Balancer level using either public or private certificates managed by AWS Certificate Manager (ACM). It showcases automatic DNS validation, certificate provisioning, and path-based routing with TLS encryption.
 
 ## Overview
 
-This setup:
-1. Creates a Network Load Balancer with TLS listener
-2. Provisions either a public or private certificate via AWS Certificate Manager
-3. Configures the NLB to forward traffic to the NGINX ingress controller
-4. Supports both public certificates (existing ACM) and private certificates (AWS Private CA)
-5. Optionally creates DNS records for public certificates
-
-## Prerequisites
-
-- EKS cluster created using `create-cluster/`
-- For private certificates: AWS Private CA ARN (can be obtained from `deploy-core-pki/` deployment)
-- For public certificates: Existing certificate in ACM in ISSUED status
+This module executes the following actions:
+1. Installs the [AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/) using Pod Identity
+2. Installs the [ACK Controller for ACM](https://aws-controllers-k8s.github.io/community/reference/acm/) to manage certificates
+3. Installs the external-dns EKS add-on for DNS management and certificate validation
+4. Deploys demo applications (hello-world and foobar services)
+5. Creates either a public or private certificate using ACM with automatic validation
+6. Configures an Application Load Balancer with HTTPS-only access and path-based routing
 
 ## Usage
 
 ```bash
-./deploy-load-balancer.sh [OPTIONAL PARAMETERS]
+./deploy-aws-load-balancer.sh [REQUIRED/OPTIONAL PARAMETERS]
 ```
+
+### Required Parameters for Public Certificates
+
+- `--cert-type public`: Use public certificates
+- `--domain-name`: Domain name for the certificate (e.g., k8-alb-demo.example.com)
+
+### Required Parameters for Private Certificates
+
+- `--cert-type private`: Use private certificates
+- `--private-ca-arn`: ARN of existing AWS Private CA (or use deployed Private CA from core-pki module)
 
 ### Optional Parameters
 
 - `--cluster-name`: Name of the EKS cluster (default: aws-pca-k8s-demo)
 - `--region`: AWS region (default: us-east-1)
-- `--public-cert-arn`: ARN of existing public certificate (if provided, uses public certificate)
-- `--private-ca-arn`: ARN of AWS Private CA (required for private certificates)
-- `--domain-name`: Domain name for private certificate (default: *.elb.&lt;region&gt;.amazonaws.com)
-- `--hosted-zone-id`: Route53 hosted zone ID for automatic DNS record creation
 
 ### Examples
 
-Deploy with private certificate:
+Deploy with public certificate and automatic DNS validation:
 ```bash
-./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012
+./deploy-aws-load-balancer.sh --cluster-name my-eks-cluster --region us-west-2 \
+  --cert-type public --domain-name k8-alb-demo.example.com
 ```
 
-Deploy with private certificate and custom domain:
+Deploy with private certificate (requires Private CA):
 ```bash
-./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012 \
-  --domain-name "api.example.com"
+./deploy-aws-load-balancer.sh --cluster-name my-eks-cluster --region us-west-2 \
+  --cert-type private --private-ca-arn arn:aws:acm-pca:us-west-2:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012
 ```
 
-Deploy with private certificate, custom domain, and DNS record creation:
+Deploy with private certificate using deployed Private CA:
 ```bash
-./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --private-ca-arn arn:aws:acm-pca:us-west-1:123456789012:certificate-authority/12345678-1234-1234-1234-123456789012 \
-  --domain-name "api.example.com" \
-  --hosted-zone-id Z1234567890ABC
+./deploy-aws-load-balancer.sh --cluster-name my-eks-cluster --region us-west-2 \
+  --cert-type private
 ```
 
-Deploy with existing public certificate:
+## Testing the Application
+
+After deployment completes, test the applications:
+
+**For Public Certificates:**
 ```bash
-./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012
+curl https://your-domain.com/hello-world
+curl https://your-domain.com/foobar
 ```
 
-Deploy with public certificate and automatic DNS record creation:
+**For Private Certificates:**
 ```bash
-./deploy-load-balancer.sh --cluster-name my-eks-cluster --region us-east-1 \
-  --public-cert-arn arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012 \
-  --hosted-zone-id Z1234567890ABC
+# Get the load balancer hostname from the script output
+curl -k https://LOAD-BALANCER-HOSTNAME/hello-world
+curl -k https://LOAD-BALANCER-HOSTNAME/foobar
 ```
 
-### Getting Private CA ARN
+## Troubleshooting
 
-If you have already deployed the core PKI using `deploy-core-pki/`, you can get the Private CA ARN with:
+### Certificate Issues
+- Check certificate status: `kubectl describe certificate -n demo-app`
+- Verify ACM controller logs: `kubectl logs -n ack-system -l app.kubernetes.io/name=acm-chart`
+- Check certificate validation: `kubectl get certificate -n demo-app -o yaml`
 
-```bash
-kubectl get awspcaclusterissuer aws-pca-cluster-issuer -o jsonpath='{.spec.arn}'
-```
+### Load Balancer Issues
+- Check AWS Load Balancer Controller logs: `kubectl logs -n aws-load-balancer-system -l app.kubernetes.io/name=aws-load-balancer-controller`
+- Verify ingress status: `kubectl describe ingress hello-world-alb -n demo-app`
+- Check target group health in AWS Console
 
-## Testing the Load Balancer
+### DNS Issues (Public Path)
+- Check external-dns logs: `kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns`
+- Verify Route53 records in AWS Console
+- Check DNSEndpoint resources: `kubectl get dnsendpoint -A`
 
-After deployment, the script will output the hostname of the Network Load Balancer. You can access the demo application using:
+## Customization
 
-```
-https://<nlb-hostname>
-```
-
-If a hosted zone ID was provided, a DNS CNAME record will be created automatically:
-- For **private certificates**: Uses the domain name specified in `--domain-name` (or defaults to *.elb.&lt;region&gt;.amazonaws.com pattern)
-- For **public certificates**: Uses the domain name from the existing certificate
-
-## Architecture
-
-The load balancer sits in front of your ingress controller:
-
-```
-Internet → NLB (TLS termination) → NGINX Ingress Controller (HTTP) → Application Pods
-```
-
-This provides TLS termination at the AWS infrastructure level while allowing the ingress controller to handle HTTP routing.
+Modify the `manifests/hello-world-app.yaml` file to customize the demo applications or add your own applications with different paths and services.

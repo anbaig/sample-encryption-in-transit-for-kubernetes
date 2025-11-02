@@ -1,26 +1,35 @@
-apiVersion: v1
-kind: Service
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: demo-nlb
-  namespace: ingress-nginx
+  name: hello-world-alb
+  namespace: demo-app
   annotations:
-    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
-    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
-    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: ${CERT_ARN}
-    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
-    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "http"
-    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: "/healthz"
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: "${CERT_ARN}"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    external-dns.alpha.kubernetes.io/hostname: "${DOMAIN_NAME}"
 spec:
-  type: LoadBalancer
-  ports:
-  - name: http
-    port: 80
-    targetPort: 80
-    protocol: TCP
-  - name: https
-    port: 443
-    targetPort: 80
-    protocol: TCP
-  selector:
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/component: controller
+  tls:
+  - hosts:
+    - "${DOMAIN_NAME}"
+  rules:
+  - host: "${DOMAIN_NAME}"
+    http:
+      paths:
+      - path: /hello-world
+        pathType: Prefix
+        backend:
+          service:
+            name: hello-world-service
+            port:
+              number: 80
+      - path: /foobar
+        pathType: Prefix
+        backend:
+          service:
+            name: foobar-service
+            port:
+              number: 80
