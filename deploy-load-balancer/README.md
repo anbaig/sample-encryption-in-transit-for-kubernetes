@@ -1,16 +1,21 @@
 # Deploy AWS Application Load Balancer with TLS Certificates
 
-This module deploys the AWS Load Balancer Controller and demonstrates TLS termination at the Application Load Balancer level using either public or private certificates managed by AWS Certificate Manager (ACM). It showcases automatic DNS validation, certificate provisioning, and path-based routing with TLS encryption.
+This module deploys the AWS Load Balancer Controller and demonstrates TLS termination at the Application Load Balancer level using certificates provisioned by the core PKI module. It showcases path-based routing with TLS encryption using certificates managed by ACM.
+
+## Prerequisites
+
+Before running this module, you must first deploy the core PKI infrastructure:
+```bash
+../deploy-core-pki/deploy-core.sh --cluster-name <cluster-name> --region <region>
+```
 
 ## Overview
 
 This module executes the following actions:
 1. Installs the [AWS Load Balancer Controller](https://kubernetes-sigs.github.io/aws-load-balancer-controller/) using Pod Identity
-2. Installs the [ACK Controller for ACM](https://aws-controllers-k8s.github.io/community/reference/acm/) to manage certificates
-3. Installs the external-dns EKS add-on for DNS management and certificate validation
-4. Deploys demo applications (hello-world and foobar services)
-5. Creates either a public or private certificate using ACM with automatic validation
-6. Configures an Application Load Balancer with HTTPS-only access and path-based routing
+2. Deploys demo applications (hello-world and foobar services)
+3. Creates either a public or private certificate using the ACM controller from core PKI module
+4. Configures an Application Load Balancer with HTTPS-only access and path-based routing
 
 ## Usage
 
@@ -82,6 +87,7 @@ curl -k https://you-domain.com/foobar
 - Check external-dns logs: `kubectl logs -n external-dns -l app.kubernetes.io/name=external-dns`
 - Verify Route53 records in AWS Console
 - Check DNSEndpoint resources: `kubectl get dnsendpoint -A`
+- Note: external-dns is installed by the core PKI module
 
 ## Customization
 
